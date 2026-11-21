@@ -5,7 +5,7 @@ Tag="cubes"
 Markdown="false"
 ---
 <?php
-/* Swarm View – Einstellungen */
+/* Swarm View – settings */
 require_once '/usr/local/emhttp/plugins/swarm-view/include/common.php';
 $sv_cfg = sv_cfg();
 $sv_sw  = sv_swarm_settings();
@@ -19,25 +19,27 @@ if ($sv_sw['active'] && $sv_sw['manager']) {
 }
 $sv_opt = fn($cur, $val, $label) => '<option value="' . htmlspecialchars($val) . '"' . ((string)$cur === (string)$val ? ' selected' : '') . '>' . htmlspecialchars($label) . '</option>';
 $sv_swarm_ok = $sv_sw['active'] && $sv_sw['manager'];
-$sv_yn  = fn($k) => $sv_opt($sv_cfg[$k], 'yes', 'Ja') . $sv_opt($sv_cfg[$k], 'no', 'Nein');
-$sv_on  = fn($k) => $sv_opt($sv_cfg[$k], 'no', 'Aus') . $sv_opt($sv_cfg[$k], 'yes', 'Ein');
-$sv_lvl = fn($k) => '<select id="' . $k . '" class="sv-lvl">' . $sv_opt($sv_cfg[$k], 'normal', 'Hinweis') . $sv_opt($sv_cfg[$k], 'warning', 'Warnung') . $sv_opt($sv_cfg[$k], 'alert', 'Alarm') . '</select>';
+$sv_yn  = fn($k) => $sv_opt($sv_cfg[$k], 'yes', sv_t('Yes')) . $sv_opt($sv_cfg[$k], 'no', sv_t('No'));
+$sv_on  = fn($k) => $sv_opt($sv_cfg[$k], 'no', sv_t('Off')) . $sv_opt($sv_cfg[$k], 'yes', sv_t('On'));
+$sv_lvl = fn($k) => '<select id="' . $k . '" class="sv-lvl">' . $sv_opt($sv_cfg[$k], 'normal', sv_t('Notice')) . $sv_opt($sv_cfg[$k], 'warning', sv_t('Warning')) . $sv_opt($sv_cfg[$k], 'alert', sv_t('Alert')) . '</select>';
 $sv_num = fn($k, $min, $max) => '<input type="number" id="' . $k . '" min="' . $min . '" max="' . $max . '" value="' . htmlspecialchars($sv_cfg[$k]) . '" class="narrow">';
+$sv_date = fn($ts, $short = false) => date(sv_lang() === 'de' ? ($short ? 'd.m. H:i' : 'd.m.Y H:i') : ($short ? 'M j, H:i' : 'Y-m-d H:i'), (int)$ts);
 $sv_upd = sv_state_read('updates');
-$sv_upd_when = !empty($sv_upd['checked']) ? date('d.m.Y H:i', (int)$sv_upd['checked']) : 'noch nie';
+$sv_upd_when = !empty($sv_upd['checked']) ? $sv_date($sv_upd['checked']) : sv_t('never');
 $sv_upd_count = count(array_filter($sv_upd['services'] ?? [], fn($x) => !empty($x['update'])));
+$sv_upd_html = htmlspecialchars($sv_upd_when) . ($sv_upd_count ? ' – <b class="sv-upd">' . htmlspecialchars(sv_tn($sv_upd_count, '{0} update available', '{0} updates available')) . '</b>' : '');
 
-// ---------- Daten für die Tabs Nodes, Wächter, Status ----------
-$sv_ago = function ($ts) {
-    if (!$ts) return 'noch nie';
+// ---------- data for the tabs Nodes, Watchdog, Status ----------
+$sv_ago = function ($ts) use ($sv_date) {
+    if (!$ts) return sv_t('never');
     $d = max(0, time() - (int)$ts);
-    if ($d < 60) return "vor $d s";
-    if ($d < 3600) return 'vor ' . intdiv($d, 60) . ' Min.';
-    if ($d < 86400) return 'vor ' . intdiv($d, 3600) . ' Std.';
-    return date('d.m.Y H:i', (int)$ts);
+    if ($d < 60) return sv_t('{0} s ago', $d);
+    if ($d < 3600) return sv_t('{0} min ago', intdiv($d, 60));
+    if ($d < 86400) return sv_t('{0} h ago', intdiv($d, 3600));
+    return $sv_date($ts);
 };
-$sv_ninfo = [];      // Hostname → Details aus node inspect
-$sv_prefer = [];     // Services mit Vorzug: Name → Node
+$sv_ninfo = [];      // hostname → details from node inspect
+$sv_prefer = [];     // services with a preferred node: name → node
 if ($sv_swarm_ok && $sv_nodes) {
     [$rc, $out] = sv_run(array_merge([$GLOBALS['DOCKER'], 'node', 'inspect'], array_map(fn($n) => $n['ID'], $sv_nodes)));
     foreach ($rc === 0 ? (json_decode($out, true) ?: []) : [] as $ni) {
@@ -63,129 +65,139 @@ $sv_mon = sv_state_read('monitor');
 $sv_self_engine = '';
 foreach ($sv_nodes as $n) if (!empty($n['Self'])) $sv_self_engine = $sv_ninfo[$n['Hostname'] ?? '']['engine'] ?? '';
 
-/** Hinweise zu einem Node: [Stufe, Text] */
+/** Warnings for a node: [level, HTML text] */
 $sv_warn = function (array $n) use ($sv_ninfo, $sv_agent, $sv_cfg, $sv_self_engine, $sv_ago) {
     $h = $n['Hostname'] ?? '';
     $i = $sv_ninfo[$h] ?? [];
     $w = [];
-    if (strtolower($n['Status'] ?? '') !== 'ready') $w[] = ['bad', 'Node ist nicht erreichbar – Swarm verlegt seine Container auf andere Nodes.'];
-    if (strtolower($n['Availability'] ?? 'active') !== 'active') $w[] = ['warn', 'Node ist ' . (strtolower($n['Availability']) === 'drain' ? 'in Wartung' : 'pausiert') . ' – Swarm startet dort keine neuen Container.'];
+    if (strtolower($n['Status'] ?? '') !== 'ready') $w[] = ['bad', sv_e('Node is unreachable – Swarm moves its containers to other nodes.')];
+    if (strtolower($n['Availability'] ?? 'active') !== 'active') $w[] = ['warn', strtolower($n['Availability']) === 'drain'
+        ? sv_e('Node is in maintenance – Swarm starts no new containers there.') : sv_e('Node is paused – Swarm starts no new containers there.')];
     if ($sv_self_engine && ($i['engine'] ?? '') && $i['engine'] !== $sv_self_engine)
-        $w[] = ['warn', "Andere Docker-Version als der Manager ({$i['engine']} statt $sv_self_engine). Gemischte Versionen funktionieren meist, sind aber eine häufige Fehlerquelle."];
+        $w[] = ['warn', sv_e('Different Docker version than the manager ({0} instead of {1}). Mixed versions usually work but are a common source of errors.', $i['engine'], $sv_self_engine)];
     if ($sv_cfg['STATS'] === 'yes') {
         $a = $sv_agent[$h] ?? null;
-        if (!$a) $w[] = ['warn', 'Der CPU/RAM-Agent hat sich noch nicht gemeldet.'];
+        if (!$a) $w[] = ['warn', sv_e('The CPU/RAM agent has not reported yet.')];
         else {
-            if (!empty($a['stale'])) $w[] = ['warn', 'Der CPU/RAM-Agent meldet keine aktuellen Werte (zuletzt ' . $sv_ago($a['ts'] ?? 0) . ').'];
+            if (!empty($a['stale'])) $w[] = ['warn', sv_e('The CPU/RAM agent reports no current values (last: {0}).', $sv_ago($a['ts'] ?? 0))];
             $noMem = !empty($a['rss']);
             foreach ($a['stats'] ?? [] as $c) if (preg_match('#^0B\s*/\s*0B$#', trim($c['MemUsage'] ?? ''))) $noMem = true;
-            if ($noMem) $w[] = ['warn', 'Docker misst hier keinen Container-Speicher (Speicher-cgroup aus). RAM-Werte der Container sind deshalb geschätzt. Abhilfe auf Raspberry Pi OS: <code>cgroup_enable=memory cgroup_memory=1</code> ans Ende der Zeile in <code>/boot/firmware/cmdline.txt</code>, dann neu starten.'];
-            if (($a['ts'] ?? 0) > time() + 5) $w[] = ['warn', 'Die Uhr dieses Nodes geht vor (' . ((int)$a['ts'] - time()) . ' s). Zeitangaben und Swarm-Zertifikate können darunter leiden – NTP prüfen.'];
+            if ($noMem) $w[] = ['warn', str_replace(['%1', '%2'], ['<code>cgroup_enable=memory cgroup_memory=1</code>', '<code>/boot/firmware/cmdline.txt</code>'],
+                sv_e('Docker measures no container memory here (memory cgroup off), so the containers\' RAM values are estimated. Fix on Raspberry Pi OS: append {0} to the line in {1}, then reboot.', '%1', '%2'))];
+            if (($a['ts'] ?? 0) > time() + 5) $w[] = ['warn', sv_e('The clock of this node is ahead ({0} s). Times and Swarm certificates can suffer – check NTP.', (int)$a['ts'] - time())];
         }
     }
     return $w;
 };
+$sv_nw = array_sum(array_map(fn($n) => count($sv_warn($n)), $sv_nodes));
 ?>
 <link type="text/css" rel="stylesheet" href="<?autov('/plugins/swarm-view/css/swarm-view.css')?>">
+<?=sv_lang_script()?>
 
 <div id="sv-settings">
-<div class="sv-tabbar"><a href="#" class="sv-tabbtn" data-tab="general"><i class="fa fa-sliders"></i> Allgemein</a><a href="#" class="sv-tabbtn" data-tab="nodes"><i class="fa fa-server"></i> Nodes<?php $sv_nw = array_sum(array_map(fn($n) => count($sv_warn($n)), $sv_nodes)); if ($sv_nw):?> <span class="sv-tabbadge"><?=$sv_nw?></span><?endif;?></a><a href="#" class="sv-tabbtn" data-tab="watch"><i class="fa fa-bell"></i> Wächter</a><a href="#" class="sv-tabbtn" data-tab="maint"><i class="fa fa-wrench"></i> Wartung</a><a href="#" class="sv-tabbtn" data-tab="status"><i class="fa fa-heartbeat"></i> Status</a></div>
+<div class="sv-tabbar"><a href="#" class="sv-tabbtn" data-tab="general"><i class="fa fa-sliders"></i> <?=sv_e('General')?></a><a href="#" class="sv-tabbtn" data-tab="nodes"><i class="fa fa-server"></i> Nodes<?if ($sv_nw):?> <span class="sv-tabbadge"><?=$sv_nw?></span><?endif;?></a><a href="#" class="sv-tabbtn" data-tab="watch"><i class="fa fa-bell"></i> <?=sv_e('Watchdog')?></a><a href="#" class="sv-tabbtn" data-tab="maint"><i class="fa fa-wrench"></i> <?=sv_e('Maintenance')?></a><a href="#" class="sv-tabbtn" data-tab="status"><i class="fa fa-heartbeat"></i> Status</a></div>
 
 <div class="sv-tab" data-tab="general">
-<div class="sv-set-title"><i class="fa fa-sitemap"></i> Swarm-Cluster</div>
+<div class="sv-set-title"><i class="fa fa-sitemap"></i> <?=sv_e('Swarm cluster')?></div>
 <?if (!$sv_swarm_ok):?>
-<p class="sv-dim">Swarm ist auf diesem Server nicht aktiv oder er ist kein Manager – Cluster-Einstellungen und Nodes sind nicht verfügbar.</p>
+<p class="sv-dim"><?=sv_e('Swarm is not active on this server or it is not a manager – cluster settings and nodes are not available.')?></p>
 <?else:?>
 <dl>
-  <dt>Container pro Service behalten:</dt>
-  <dd><input type="number" id="HISTORY_LIMIT" min="1" max="20" value="<?=htmlspecialchars((string)($sv_sw['historyLimit'] ?? 5))?>" class="narrow"> <span class="sv-dim">(Swarm-Standard: 5, empfohlen: 1)</span></dd>
+  <dt><?=sv_e('Containers kept per service:')?></dt>
+  <dd><input type="number" id="HISTORY_LIMIT" min="1" max="20" value="<?=htmlspecialchars((string)($sv_sw['historyLimit'] ?? 5))?>" class="narrow"> <span class="sv-dim"><?=sv_e('(Swarm default: 5, recommended: 1)')?></span></dd>
 </dl>
 <blockquote class="inline_help">
-  Wie viele Container Swarm pro Service aufhebt – inklusive des laufenden. Bei <b>1</b> bleibt nur der aktuelle übrig; alte, gestoppte Container nach Neustarts/Updates werden auf allen Nodes automatisch gelöscht. Ist ein Service abgestürzt, bleibt der letzte Container zur Fehlersuche stehen.
+  <?=sv_e('How many containers Swarm keeps per service – including the running one. With 1 only the current one remains; old, stopped containers after restarts/updates are removed automatically on all nodes. If a service crashed, the last container stays for troubleshooting.')?>
 </blockquote>
 <dl>
-  <dt>Ausfall-Erkennung (Heartbeat):</dt>
-  <dd><input type="number" id="HEARTBEAT" min="1" max="60" value="<?=htmlspecialchars((string)($sv_sw['heartbeat'] ?? 5))?>" class="narrow"> Sekunden <span class="sv-dim">(Standard: 5)</span></dd>
+  <dt><?=sv_e('Failure detection (heartbeat):')?></dt>
+  <dd><input type="number" id="HEARTBEAT" min="1" max="60" value="<?=htmlspecialchars((string)($sv_sw['heartbeat'] ?? 5))?>" class="narrow"> <?=sv_e('seconds')?> <span class="sv-dim"><?=sv_e('(default: 5)')?></span></dd>
 </dl>
 <blockquote class="inline_help">
-  Wie oft sich die Nodes beim Manager melden. Kleinere Werte erkennen einen ausgefallenen Pi schneller (Container starten früher auf Unraid neu), erzeugen aber etwas mehr Netzwerkverkehr. Ein Node gilt erst nach mehreren verpassten Heartbeats als „down“.
+  <?=sv_e('How often the nodes report to the manager. Smaller values detect a failed node faster (its containers start earlier on another node) but cause a little more network traffic. A node counts as "down" only after several missed heartbeats.')?>
 </blockquote>
-
 <?endif;?>
 
 <div class="sv-set-title"><i class="fa fa-cubes"></i> Stacks</div>
 <dl>
-  <dt>Entfernte Services beim Deploy löschen:</dt>
+  <dt><?=sv_e('Remove deleted services on deploy:')?></dt>
   <dd><select id="DEPLOY_PRUNE">
-    <?=$sv_opt($sv_cfg['DEPLOY_PRUNE'], 'yes', 'Ja (--prune)')?>
-    <?=$sv_opt($sv_cfg['DEPLOY_PRUNE'], 'no', 'Nein')?>
+    <?=$sv_opt($sv_cfg['DEPLOY_PRUNE'], 'yes', sv_t('Yes (--prune)'))?>
+    <?=$sv_opt($sv_cfg['DEPLOY_PRUNE'], 'no', sv_t('No'))?>
   </select></dd>
 </dl>
 <blockquote class="inline_help">
-  Bei „Ja“ werden Services, die du aus der docker-stack.yml gelöscht hast, beim nächsten Stack Up / Update Stack auch im Swarm entfernt. Bei „Nein“ laufen sie weiter, bis du den Stack herunterfährst.
+  <?=sv_e('With "Yes", services you deleted from docker-stack.yml are also removed from the swarm at the next Stack Up / Update Stack. With "No" they keep running until you shut down the stack.')?>
 </blockquote>
 <dl>
-  <dt>Stack-Dateien:</dt>
+  <dt><?=sv_e('Stack files:')?></dt>
   <dd><span class="sv-mono"><?=htmlspecialchars($GLOBALS['STACK_ROOT'])?>/&lt;name&gt;/</span></dd>
 </dl>
 
-<div class="sv-set-title"><i class="fa fa-eye"></i> Anzeige</div>
+<div class="sv-set-title"><i class="fa fa-eye"></i> <?=sv_e('Display')?></div>
 <dl>
-  <dt>Container anderer Nodes in der Docker-Liste:</dt>
+  <dt><?=sv_e('Language:')?></dt>
+  <dd><select id="LANGUAGE">
+    <?=$sv_opt($sv_cfg['LANGUAGE'], 'auto', sv_t('Like Unraid'))?>
+    <?=$sv_opt($sv_cfg['LANGUAGE'], 'en', 'English')?>
+    <?=$sv_opt($sv_cfg['LANGUAGE'], 'de', 'Deutsch')?>
+  </select></dd>
+</dl>
+<dl>
+  <dt><?=sv_e('Containers of other nodes in the Docker list:')?></dt>
   <dd><select id="REMOTE_ROWS">
-    <?=$sv_opt($sv_cfg['REMOTE_ROWS'], 'always', 'Immer')?>
-    <?=$sv_opt($sv_cfg['REMOTE_ROWS'], 'advanced', 'Nur in der erweiterten Ansicht')?>
-    <?=$sv_opt($sv_cfg['REMOTE_ROWS'], 'never', 'Nie (nur in der Swarm-Leiste)')?>
+    <?=$sv_opt($sv_cfg['REMOTE_ROWS'], 'always', sv_t('Always'))?>
+    <?=$sv_opt($sv_cfg['REMOTE_ROWS'], 'advanced', sv_t('Only in the advanced view'))?>
+    <?=$sv_opt($sv_cfg['REMOTE_ROWS'], 'never', sv_t('Never (only in the Swarm section)'))?>
   </select></dd>
 </dl>
 <dl>
-  <dt>Host-Spalte (erweiterte Ansicht):</dt>
+  <dt><?=sv_e('Host column (advanced view):')?></dt>
   <dd><select id="HOST_COLUMN">
-    <?=$sv_opt($sv_cfg['HOST_COLUMN'], 'yes', 'Anzeigen')?>
-    <?=$sv_opt($sv_cfg['HOST_COLUMN'], 'no', 'Ausblenden')?>
+    <?=$sv_opt($sv_cfg['HOST_COLUMN'], 'yes', sv_t('Show'))?>
+    <?=$sv_opt($sv_cfg['HOST_COLUMN'], 'no', sv_t('Hide'))?>
   </select></dd>
 </dl>
 <dl>
-  <dt>Swarm-Leiste auf der Docker-Seite:</dt>
+  <dt><?=sv_e('Swarm section on the Docker page:')?></dt>
   <dd><select id="SWARM_POSITION">
-    <?=$sv_opt($sv_cfg['SWARM_POSITION'], 'top', 'Ganz oben (über den Containern)')?>
-    <?=$sv_opt($sv_cfg['SWARM_POSITION'], 'middle', 'Zwischen Containern und Compose')?>
-    <?=$sv_opt($sv_cfg['SWARM_POSITION'], 'bottom', 'Ganz unten (unter Compose)')?>
-  </select> <span class="sv-dim">wirkt beim nächsten Öffnen der Docker-Seite</span></dd>
+    <?=$sv_opt($sv_cfg['SWARM_POSITION'], 'top', sv_t('At the top (above the containers)'))?>
+    <?=$sv_opt($sv_cfg['SWARM_POSITION'], 'middle', sv_t('Between containers and Compose'))?>
+    <?=$sv_opt($sv_cfg['SWARM_POSITION'], 'bottom', sv_t('At the bottom (below Compose)'))?>
+  </select> <span class="sv-dim"><?=sv_e('applies the next time the Docker page opens')?></span></dd>
 </dl>
 <dl>
-  <dt>Verwaiste Images in der Docker-Liste:</dt>
+  <dt><?=sv_e('Orphan images in the Docker list:')?></dt>
   <dd><select id="ORPHAN_IMAGES">
-    <?=$sv_opt($sv_cfg['ORPHAN_IMAGES'], 'swarm', 'Swarm-Reserve und alte Versionen ausblenden')?>
-    <?=$sv_opt($sv_cfg['ORPHAN_IMAGES'], 'hide', 'Alle ausblenden')?>
-    <?=$sv_opt($sv_cfg['ORPHAN_IMAGES'], 'show', 'Anzeigen (wie Unraid)')?>
+    <?=$sv_opt($sv_cfg['ORPHAN_IMAGES'], 'swarm', sv_t('Hide Swarm reserve and old versions'))?>
+    <?=$sv_opt($sv_cfg['ORPHAN_IMAGES'], 'hide', sv_t('Hide all'))?>
+    <?=$sv_opt($sv_cfg['ORPHAN_IMAGES'], 'show', sv_t('Show (like Unraid)'))?>
   </select></dd>
 </dl>
 <blockquote class="inline_help">
-  Wechselt ein Swarm-Service den Node, bleibt sein Image auf dem alten Node liegen und Unraid zeigt es in der erweiterten Ansicht als „verwaistes Image“ ganz oben.
-  Diese Images sind eine nützliche Reserve: fällt der andere Node aus, startet der Service sofort, ohne das Image erst herunterzuladen. Deshalb werden sie nur ausgeblendet, nicht gelöscht.
-  <b>Swarm-Reserve und alte Versionen</b> blendet Images aus, die ein Swarm-Service (auf irgendeinem Node) nutzt, und Images ohne Namen (alte Versionen nach Updates – die löscht „Aufräumen“). Andere verwaiste Images bleiben sichtbar.
-  Statt der ausgeblendeten Zeilen steht eine einzelne Zeile mit der Anzahl; ein Klick darauf zeigt sie wieder.
+  <?=sv_e('When a Swarm service changes its node, its image stays on the old node and Unraid shows it at the top of the advanced view as an "orphan image".')?>
+  <?=sv_e('These images are a useful reserve: if the other node fails, the service starts right away without downloading the image first. That is why they are only hidden, not deleted.')?>
+  <?=sv_e('"Hide Swarm reserve and old versions" hides images used by a Swarm service (on any node) and images without a name (old versions after updates – "Cleanup" deletes those). Other orphan images stay visible.')?>
+  <?=sv_e('Instead of the hidden rows there is a single row with the count; a click on it shows them again.')?>
 </blockquote>
 <dl>
-  <dt>CPU/RAM der Folder-View-Ordner:</dt>
+  <dt><?=sv_e('CPU/RAM of Folder View folders:')?></dt>
   <dd><select id="FOLDER_LOAD">
-    <?=$sv_opt($sv_cfg['FOLDER_LOAD'], 'total', 'Gesamt (alle Nodes zusammen)')?>
-    <?=$sv_opt($sv_cfg['FOLDER_LOAD'], 'local', 'Nur lokal (wie ohne Plugin)')?>
+    <?=$sv_opt($sv_cfg['FOLDER_LOAD'], 'total', sv_t('Total (all nodes together)'))?>
+    <?=$sv_opt($sv_cfg['FOLDER_LOAD'], 'local', sv_t('Local only (as without the plugin)'))?>
   </select>
-  <span class="sv-dim">Die Aufteilung pro Node steht immer im Tooltip über dem Wert. Braucht den CPU/RAM-Agenten.</span></dd>
+  <span class="sv-dim"><?=sv_e('The split per node is always in the tooltip over the value. Needs the CPU/RAM agent.')?></span></dd>
 </dl>
 <dl>
-  <dt>Aktualisierung alle:</dt>
-  <dd><input type="number" id="REFRESH" min="5" max="300" value="<?=htmlspecialchars($sv_cfg['REFRESH'])?>" class="narrow"> Sekunden</dd>
+  <dt><?=sv_e('Refresh every:')?></dt>
+  <dd><input type="number" id="REFRESH" min="5" max="300" value="<?=htmlspecialchars($sv_cfg['REFRESH'])?>" class="narrow"> <?=sv_e('seconds')?></dd>
 </dl>
-
 </div>
 
 <div class="sv-tab" data-tab="nodes">
 <div class="sv-set-title"><i class="fa fa-server"></i> Nodes</div>
 <?if (!$sv_swarm_ok):?>
-<p class="sv-dim">Swarm ist auf diesem Server nicht aktiv oder er ist kein Manager.</p>
+<p class="sv-dim"><?=sv_e('Swarm is not active on this server or it is not a manager.')?></p>
 <?else:?>
 <?foreach ($sv_nodes as $n):
     $host = $n['Hostname'] ?? '?';
@@ -199,21 +211,21 @@ $sv_warn = function (array $n) use ($sv_ninfo, $sv_agent, $sv_cfg, $sv_self_engi
 <div class="sv-node-card">
   <div class="sv-node-head">
     <i class="fa <?=!empty($n['Self']) ? 'fa-server' : 'fa-external-link'?>"></i>
-    <b><?=htmlspecialchars($host)?></b><?=!empty($n['Self']) ? ' <span class="sv-dim">(dieser Server)</span>' : ''?>
-    <span class="<?=$ready ? 'sv-ok' : 'sv-bad'?>" style="margin-left:10px"><?=$ready ? 'bereit' : 'nicht erreichbar'?></span>
+    <b><?=htmlspecialchars($host)?></b><?=!empty($n['Self']) ? ' <span class="sv-dim">' . sv_e('(this server)') . '</span>' : ''?>
+    <span class="<?=$ready ? 'sv-ok' : 'sv-bad'?>" style="margin-left:10px"><?=$ready ? sv_e('ready') : sv_e('unreachable')?></span>
     <select class="sv-avail" data-node="<?=htmlspecialchars($host)?>" data-current="<?=htmlspecialchars($avail)?>">
-      <?=$sv_opt($avail, 'active', 'Aktiv')?>
-      <?=$sv_opt($avail, 'pause', 'Pausiert – keine neuen Container')?>
-      <?=$sv_opt($avail, 'drain', 'Wartung – alle Container abziehen')?>
+      <?=$sv_opt($avail, 'active', sv_t('Active'))?>
+      <?=$sv_opt($avail, 'pause', sv_t('Paused – no new containers'))?>
+      <?=$sv_opt($avail, 'drain', sv_t('Maintenance – move all containers away'))?>
     </select>
   </div>
   <table class="sv-node-facts"><tr>
-    <td><span class="sv-dim">Rolle</span><br><?=htmlspecialchars($role)?></td>
+    <td><span class="sv-dim"><?=sv_e('Role')?></span><br><?=htmlspecialchars($role)?></td>
     <td><span class="sv-dim">IP</span><br><span class="sv-mono"><?=htmlspecialchars($i['addr'] ?? '–')?></span></td>
-    <td><span class="sv-dim">Architektur</span><br><?=htmlspecialchars($i['arch'] ?? '–')?></td>
+    <td><span class="sv-dim"><?=sv_e('Architecture')?></span><br><?=htmlspecialchars($i['arch'] ?? '–')?></td>
     <td><span class="sv-dim">Docker</span><br><?=htmlspecialchars($i['engine'] ?? '–')?></td>
-    <td><span class="sv-dim">CPU / RAM</span><br><?=htmlspecialchars(($i['cpus'] ?? '?') . ' Kerne / ' . ($i['memGB'] ?? '?') . ' GB')?></td>
-    <td><span class="sv-dim">Agent</span><br><?=$sv_cfg['STATS'] !== 'yes' ? '<span class="sv-dim">aus</span>' : ($a ? htmlspecialchars($sv_ago($a['ts'] ?? 0)) : '<span class="sv-warn">keine Daten</span>')?></td>
+    <td><span class="sv-dim">CPU / RAM</span><br><?=sv_e('{0} cores / {1} GB', $i['cpus'] ?? '?', $i['memGB'] ?? '?')?></td>
+    <td><span class="sv-dim">Agent</span><br><?=$sv_cfg['STATS'] !== 'yes' ? '<span class="sv-dim">' . sv_e('off') . '</span>' : ($a ? htmlspecialchars($sv_ago($a['ts'] ?? 0)) : '<span class="sv-warn">' . sv_e('no data') . '</span>')?></td>
     <td><span class="sv-dim">Labels</span><br><span class="sv-mono"><?=$i['labels'] ?? [] ? htmlspecialchars(implode(', ', array_map(fn($k, $v) => "$k=$v", array_keys($i['labels']), $i['labels']))) : '–'?></span></td>
   </tr></table>
   <?foreach ($warn as [$lvl, $txt]):?>
@@ -222,185 +234,183 @@ $sv_warn = function (array $n) use ($sv_ninfo, $sv_agent, $sv_cfg, $sv_self_engi
 </div>
 <?endforeach;?>
 <blockquote class="inline_help">
-  <b>Pausiert:</b> laufende Container bleiben, aber Swarm startet dort nichts Neues.<br>
-  <b>Wartung (drain):</b> alle Swarm-Container werden auf andere Nodes verschoben – z. B. bevor du den Pi neu startest oder umbaust. Danach wieder auf „Aktiv“ stellen; Services mit „★ Node“ kehren dann von selbst zurück.
-  Die Verfügbarkeit wird sofort geändert, ohne „Übernehmen“.
+  <?=sv_e('Paused: running containers stay, but Swarm starts nothing new there.')?><br>
+  <?=sv_e('Maintenance (drain): all Swarm containers are moved to other nodes – e.g. before you reboot or rebuild a node. Set it back to "Active" afterwards; services with "★ node" return on their own.')?>
+  <?=sv_e('The availability changes immediately, without "Apply".')?>
 </blockquote>
 <?endif;?>
 </div>
 
 <div class="sv-tab" data-tab="watch">
-<div class="sv-set-title"><i class="fa fa-flash"></i> Update-Hinweise</div>
+<div class="sv-set-title"><i class="fa fa-flash"></i> <?=sv_e('Update hints')?></div>
 <dl>
-  <dt>Nach Image-Updates suchen:</dt>
+  <dt><?=sv_e('Check for image updates:')?></dt>
   <dd><select id="UPDATE_CHECK" class="sv-toggle" data-target="#sv-upd-details"><?=$sv_on('UPDATE_CHECK')?></select></dd>
 </dl>
 <div id="sv-upd-details">
 <dl>
-  <dt>Prüfen alle:</dt>
-  <dd><?=$sv_num('UPDATE_INTERVAL', 1, 168)?> Stunden</dd>
+  <dt><?=sv_e('Check every:')?></dt>
+  <dd><?=$sv_num('UPDATE_INTERVAL', 1, 168)?> <?=sv_e('hours')?></dd>
 </dl>
 </div>
 <dl>
-  <dt>Letzte Prüfung:</dt>
-  <dd><span id="sv-upd-last"><?=htmlspecialchars($sv_upd_when)?><?=$sv_upd_count ? " – <b class=\"sv-upd\">$sv_upd_count Update" . ($sv_upd_count === 1 ? '' : 's') . ' verfügbar</b>' : ''?></span>
-      <input type="button" id="sv-upd-now" value="Jetzt prüfen"<?=$sv_swarm_ok ? '' : ' disabled'?> style="margin-left:10px"></dd>
+  <dt><?=sv_e('Last check:')?></dt>
+  <dd><span id="sv-upd-last"><?=$sv_upd_html?></span>
+      <input type="button" id="sv-upd-now" value="<?=sv_e('Check now')?>"<?=$sv_swarm_ok ? '' : ' disabled'?> style="margin-left:10px"></dd>
 </dl>
 <blockquote class="inline_help">
-  Vergleicht für jeden Swarm-Service die laufende Image-Version mit der Registry – genauso wie Unraid es für normale Container macht (inkl. privater Registries mit hinterlegten Zugangsdaten).
-  Gefundene Updates erscheinen als <b>Update</b>-Badge und Button in der Swarm-Leiste und im Menü der Container. Lokal gebaute Images (ohne Registry) können nicht geprüft werden.
-  <b>Rollback</b> setzt einen Service auf seine vorherige Version zurück, falls ein Update Probleme macht.
+  <?=sv_e('Compares the running image version of every Swarm service with the registry – just like Unraid does for regular containers (including private registries with stored credentials).')?>
+  <?=sv_e('Updates found appear as an "Update" badge in the Swarm section and in the containers\' menu. Locally built images (without a registry) cannot be checked.')?>
+  <?=sv_e('"Rollback" returns a service to its previous version if an update causes problems.')?>
 </blockquote>
 
-<div class="sv-set-title"><i class="fa fa-bell"></i> Benachrichtigungen</div>
+<div class="sv-set-title"><i class="fa fa-bell"></i> <?=sv_e('Notifications')?></div>
 <dl>
-  <dt>Benachrichtigungen:</dt>
+  <dt><?=sv_e('Notifications:')?></dt>
   <dd><select id="NOTIFY_ENABLED" class="sv-toggle" data-target="#sv-notify-details"><?=$sv_on('NOTIFY_ENABLED')?></select>
-      <input type="button" id="sv-notify-test" value="Test senden" style="margin-left:10px"></dd>
+      <input type="button" id="sv-notify-test" value="<?=sv_e('Send test')?>" style="margin-left:10px"></dd>
 </dl>
 <blockquote class="inline_help">
-  Verschickt Meldungen über Unraids eigenes Benachrichtigungssystem – also überall dorthin, wo du es unter <i>Einstellungen → Benachrichtigungen</i> eingerichtet hast (Browser, E-Mail, Telegram, Discord …).
-  Ein Hintergrund-Wächter prüft dafür jede Minute den Swarm.
+  <?=sv_e('Sends messages through Unraid\'s own notification system – everywhere you set it up under Settings → Notifications (browser, e-mail, Telegram, Discord …).')?>
+  <?=sv_e('A background watchdog checks the swarm every minute for this.')?>
 </blockquote>
 <div id="sv-notify-details">
 <table class="sv-notify-table">
-  <thead><tr><th>Ereignis</th><th>Melden</th><th>Bedingung</th><th>Wichtigkeit</th></tr></thead>
+  <thead><tr><th><?=sv_e('Event')?></th><th><?=sv_e('Notify')?></th><th><?=sv_e('Condition')?></th><th><?=sv_e('Importance')?></th></tr></thead>
   <tbody>
-    <tr><td><b>Node offline</b><div class="sv-dim">z. B. Pi ausgefallen oder vom Netz</div></td>
+    <tr><td><b><?=sv_e('Node offline')?></b><div class="sv-dim"><?=sv_e('e.g. a node failed or lost its network')?></div></td>
         <td><select id="NOTIFY_NODE"><?=$sv_yn('NOTIFY_NODE')?></select></td>
-        <td>nach <?=$sv_num('NOTIFY_NODE_DELAY', 0, 120)?> Min.</td>
+        <td><?=sv_e('after')?> <?=$sv_num('NOTIFY_NODE_DELAY', 0, 120)?> <?=sv_e('min')?></td>
         <td><?=$sv_lvl('NOTIFY_NODE_LEVEL')?></td></tr>
-    <tr><td><b>Neustart-Schleife</b><div class="sv-dim">Container stürzt immer wieder ab</div></td>
+    <tr><td><b><?=sv_e('Crash loop')?></b><div class="sv-dim"><?=sv_e('a container keeps crashing')?></div></td>
         <td><select id="NOTIFY_CRASH"><?=$sv_yn('NOTIFY_CRASH')?></select></td>
-        <td><?=$sv_num('NOTIFY_CRASH_COUNT', 2, 50)?> Neustarts in <?=$sv_num('NOTIFY_CRASH_WINDOW', 2, 240)?> Min.</td>
+        <td><?=$sv_num('NOTIFY_CRASH_COUNT', 2, 50)?> <?=sv_e('restarts in')?> <?=$sv_num('NOTIFY_CRASH_WINDOW', 2, 240)?> <?=sv_e('min')?></td>
         <td><?=$sv_lvl('NOTIFY_CRASH_LEVEL')?></td></tr>
-    <tr><td><b>Kann nicht starten</b><div class="sv-dim">kein passender Node (Image, Constraints, Ressourcen)</div></td>
+    <tr><td><b><?=sv_e('Cannot start')?></b><div class="sv-dim"><?=sv_e('no suitable node (image, constraints, resources)')?></div></td>
         <td><select id="NOTIFY_PENDING"><?=$sv_yn('NOTIFY_PENDING')?></select></td>
-        <td>nach <?=$sv_num('NOTIFY_PENDING_DELAY', 0, 240)?> Min.</td>
+        <td><?=sv_e('after')?> <?=$sv_num('NOTIFY_PENDING_DELAY', 0, 240)?> <?=sv_e('min')?></td>
         <td><?=$sv_lvl('NOTIFY_PENDING_LEVEL')?></td></tr>
-    <tr><td><b>Node gewechselt</b><div class="sv-dim">Service ist ausgewichen oder zurückgekehrt</div></td>
+    <tr><td><b><?=sv_e('Node changed')?></b><div class="sv-dim"><?=sv_e('a service failed over or returned')?></div></td>
         <td><select id="NOTIFY_MOVED"><?=$sv_yn('NOTIFY_MOVED')?></select></td>
-        <td><span class="sv-dim">sofort</span></td>
+        <td><span class="sv-dim"><?=sv_e('immediately')?></span></td>
         <td><?=$sv_lvl('NOTIFY_MOVED_LEVEL')?></td></tr>
-    <tr><td><b>Update verfügbar</b><div class="sv-dim">einmal pro neuer Version (Update-Hinweise müssen an sein)</div></td>
+    <tr><td><b><?=sv_e('Update available')?></b><div class="sv-dim"><?=sv_e('once per new version (update hints must be on)')?></div></td>
         <td><select id="NOTIFY_UPDATES"><?=$sv_yn('NOTIFY_UPDATES')?></select></td>
-        <td><span class="sv-dim">bei jeder Prüfung</span></td>
+        <td><span class="sv-dim"><?=sv_e('at every check')?></span></td>
         <td><?=$sv_lvl('NOTIFY_UPDATES_LEVEL')?></td></tr>
   </tbody>
 </table>
 <dl>
-  <dt>Entwarnung senden:</dt>
-  <dd><select id="NOTIFY_RECOVERY"><?=$sv_yn('NOTIFY_RECOVERY')?></select> <span class="sv-dim">„Behoben: …“, sobald ein gemeldetes Problem weg ist</span></dd>
+  <dt><?=sv_e('Send all-clear:')?></dt>
+  <dd><select id="NOTIFY_RECOVERY"><?=$sv_yn('NOTIFY_RECOVERY')?></select> <span class="sv-dim"><?=sv_e('"Resolved: …" as soon as a reported problem is gone')?></span></dd>
 </dl>
 <dl>
-  <dt>Erinnern, solange ein Problem besteht:</dt>
-  <dd>alle <?=$sv_num('NOTIFY_REPEAT', 0, 168)?> Stunden <span class="sv-dim">(0 = nur einmal melden)</span></dd>
+  <dt><?=sv_e('Remind while a problem lasts:')?></dt>
+  <dd><?=sv_e('every')?> <?=$sv_num('NOTIFY_REPEAT', 0, 168)?> <?=sv_e('hours')?> <span class="sv-dim"><?=sv_e('(0 = notify only once)')?></span></dd>
 </dl>
 <dl>
-  <dt>Services ignorieren:</dt>
-  <dd><input type="text" id="NOTIFY_IGNORE" value="<?=htmlspecialchars($sv_cfg['NOTIFY_IGNORE'])?>" placeholder="z. B. ^test_|_debug$" style="width:280px" spellcheck="false" autocapitalize="off"></dd>
+  <dt><?=sv_e('Ignore services:')?></dt>
+  <dd><input type="text" id="NOTIFY_IGNORE" value="<?=htmlspecialchars($sv_cfg['NOTIFY_IGNORE'])?>" placeholder="<?=sv_e('e.g. ^test_|_debug$')?>" style="width:280px" spellcheck="false" autocapitalize="off"></dd>
 </dl>
 <blockquote class="inline_help">
-  Regulärer Ausdruck auf den Service-Namen (z. B. <code>paperless_paperless-ngx</code>). Passende Services lösen keine Meldungen zu Neustarts, Startproblemen oder Node-Wechseln aus.
-  Die Verzögerungen verhindern Fehlalarme bei kurzen Aussetzern, z. B. wenn der Pi nur neu startet.
+  <?=sv_e('Regular expression on the service name (e.g. paperless_paperless-ngx). Matching services raise no notifications about restarts, start problems or node changes.')?>
+  <?=sv_e('The delays prevent false alarms on short outages, e.g. when a node just reboots.')?>
 </blockquote>
 </div>
 
-<div class="sv-set-title"><i class="fa fa-star"></i> Bevorzugter Node</div>
+<div class="sv-set-title"><i class="fa fa-star"></i> <?=sv_e('Preferred node')?></div>
 <dl>
-  <dt>Automatische Rückkehr:</dt>
+  <dt><?=sv_e('Automatic return:')?></dt>
   <dd><select id="REBALANCE" class="sv-toggle" data-target="#sv-rebal-details"><?=$sv_on('REBALANCE')?></select>
     <?if ($sv_prefer):?>
-      <span class="sv-dim" style="margin-left:10px" title="<?=htmlspecialchars(implode("\n", array_map(fn($k, $v) => "$k → $v", array_keys($sv_prefer), $sv_prefer)))?>"><?=count($sv_prefer)?> Service<?=count($sv_prefer) === 1 ? '' : 's'?> mit Vorzug: <?=htmlspecialchars(implode(', ', array_map(fn($k, $v) => preg_replace('/^[^_]+_/', '', $k) . " → $v", array_keys($sv_prefer), $sv_prefer)))?></span>
+      <span class="sv-dim" style="margin-left:10px" title="<?=htmlspecialchars(implode("\n", array_map(fn($k, $v) => "$k → $v", array_keys($sv_prefer), $sv_prefer)))?>"><?=htmlspecialchars(sv_tn(count($sv_prefer), '{0} service with a preferred node:', '{0} services with a preferred node:'))?> <?=htmlspecialchars(implode(', ', array_map(fn($k, $v) => preg_replace('/^[^_]+_/', '', $k) . " → $v", array_keys($sv_prefer), $sv_prefer)))?></span>
     <?else:?>
-      <span class="sv-warn" style="margin-left:10px">Noch kein Service hat einen bevorzugten Node – in der Swarm-Leiste bei „Läuft auf“ „★ Node“ wählen.</span>
+      <span class="sv-warn" style="margin-left:10px"><?=sv_e('No service has a preferred node yet – choose "★ node" under "Runs on" in the Swarm section.')?></span>
     <?endif;?></dd>
 </dl>
 <div id="sv-rebal-details">
 <dl>
-  <dt>Node muss stabil laufen:</dt>
-  <dd><?=$sv_num('REBALANCE_DELAY', 1, 120)?> Minuten, bevor Services zurückkehren</dd>
+  <dt><?=sv_e('Node must run stable for:')?></dt>
+  <dd><?=$sv_num('REBALANCE_DELAY', 1, 120)?> <?=sv_e('minutes before services return')?></dd>
 </dl>
 </div>
 <blockquote class="inline_help">
-  Services mit dem Label <code>swarm-view.prefer</code> laufen bevorzugt auf diesem Node, weichen bei einem Ausfall aus und kehren danach <b>automatisch zurück</b>, sobald der Node wieder stabil läuft. In der docker-stack.yml:
+  <?=sv_e('Services with the label swarm-view.prefer prefer this node, fail over when it goes down and return automatically as soon as the node runs stable again. In docker-stack.yml:')?>
   <pre class="sv-mono">    deploy:
       labels:
         swarm-view.prefer: raspberrypi</pre>
-  Die Rückkehr kostet einen Neustart des Containers. Services mit festem Node (Constraint in der Datei oder Node-Auswahl) werden nicht verschoben.
+  <?=sv_e('Returning costs one restart of the container. Services with a fixed node (constraint in the file or node selection) are not moved.')?>
 </blockquote>
-
 </div>
 
 <div class="sv-tab" data-tab="maint">
-<div class="sv-set-title"><i class="fa fa-trash"></i> Aufräumen</div>
+<div class="sv-set-title"><i class="fa fa-trash"></i> <?=sv_e('Cleanup')?></div>
 <dl>
-  <dt>Automatisch aufräumen:</dt>
+  <dt><?=sv_e('Clean up automatically:')?></dt>
   <dd><select id="CLEANUP_SCHEDULE">
-    <?=$sv_opt($sv_cfg['CLEANUP_SCHEDULE'], 'off', 'Aus')?>
-    <?=$sv_opt($sv_cfg['CLEANUP_SCHEDULE'], 'daily', 'Täglich (04:17)')?>
-    <?=$sv_opt($sv_cfg['CLEANUP_SCHEDULE'], 'weekly', 'Wöchentlich (So 04:17)')?>
+    <?=$sv_opt($sv_cfg['CLEANUP_SCHEDULE'], 'off', sv_t('Off'))?>
+    <?=$sv_opt($sv_cfg['CLEANUP_SCHEDULE'], 'daily', sv_t('Daily (04:17)'))?>
+    <?=$sv_opt($sv_cfg['CLEANUP_SCHEDULE'], 'weekly', sv_t('Weekly (Sun 04:17)'))?>
   </select></dd>
 </dl>
 <dl>
-  <dt>Verwaiste Images mitlöschen:</dt>
+  <dt><?=sv_e('Also delete unused images:')?></dt>
   <dd><select id="CLEANUP_IMAGES">
-    <?=$sv_opt($sv_cfg['CLEANUP_IMAGES'], 'yes', 'Ja')?>
-    <?=$sv_opt($sv_cfg['CLEANUP_IMAGES'], 'no', 'Nein')?>
+    <?=$sv_opt($sv_cfg['CLEANUP_IMAGES'], 'yes', sv_t('Yes'))?>
+    <?=$sv_opt($sv_cfg['CLEANUP_IMAGES'], 'no', sv_t('No'))?>
   </select></dd>
 </dl>
 <blockquote class="inline_help">
-  Aufräumen startet auf jedem Node einmal einen kleinen Job, der gestoppte Swarm-Container löscht – und auf Wunsch verwaiste Images (alte Versionen nach Updates, die kein Container mehr nutzt). Laufende Container, Compose- und Unraid-Container bleiben unberührt. Das Ergebnis landet im Syslog (Tag „swarm-view“).
+  <?=sv_e('Cleanup runs a small job once on every node that deletes stopped Swarm containers – and optionally unused images (old versions after updates that no container uses anymore). Running containers, Compose and Unraid containers are not touched. The result goes to the syslog (tag "swarm-view").')?>
 </blockquote>
 <dl>
-  <dt>Jetzt aufräumen:</dt>
-  <dd><input type="button" id="sv-set-cleanup" value="Aufräumen"<?=$sv_swarm_ok ? '' : ' disabled'?>></dd>
+  <dt><?=sv_e('Clean up now:')?></dt>
+  <dd><input type="button" id="sv-set-cleanup" value="<?=sv_e('Cleanup')?>"<?=$sv_swarm_ok ? '' : ' disabled'?>></dd>
 </dl>
 
-<div class="sv-set-title"><i class="fa fa-tachometer"></i> Auslastung (CPU/RAM)</div>
+<div class="sv-set-title"><i class="fa fa-tachometer"></i> <?=sv_e('Load (CPU/RAM)')?></div>
 <dl>
-  <dt>Auslastung aller Nodes messen:</dt>
+  <dt><?=sv_e('Measure the load of all nodes:')?></dt>
   <dd><select id="STATS" class="sv-toggle" data-target="#sv-stats-details"><?=$sv_on('STATS')?></select></dd>
 </dl>
 <div id="sv-stats-details">
 <dl>
-  <dt>Messen alle:</dt>
-  <dd><?=$sv_num('STATS_INTERVAL', 5, 300)?> Sekunden</dd>
+  <dt><?=sv_e('Measure every:')?></dt>
+  <dd><?=$sv_num('STATS_INTERVAL', 5, 300)?> <?=sv_e('seconds')?></dd>
 </dl>
 </div>
 <blockquote class="inline_help">
-  Startet einen kleinen Agenten (<code>swarm-view-agent</code>, max. 64 MB RAM) auf jedem Node. Er liefert CPU/RAM der Nodes und der Container – auch der Container auf dem Pi, die sonst ohne Werte bleiben.
-  Der Agent erscheint nicht in der Container-Liste. Beim Ausschalten wird er entfernt.
+  <?=sv_e('Starts a small agent (swarm-view-agent, max. 64 MB RAM) on every node. It delivers CPU/RAM of the nodes and containers – including containers on other nodes, which otherwise have no values.')?>
+  <?=sv_e('The agent does not appear in the container list. It is removed when switched off.')?>
 </blockquote>
-
 </div>
 
 <div class="sv-tab" data-tab="status">
-<div class="sv-set-title"><i class="fa fa-heartbeat"></i> Hintergrund-Wächter</div>
+<div class="sv-set-title"><i class="fa fa-heartbeat"></i> <?=sv_e('Background watchdog')?></div>
 <?php
   $sv_need = sv_monitor_needed($sv_cfg);
   $sv_last = (int)($sv_mon['lastRun'] ?? 0);
   $sv_late = $sv_need && (!$sv_last || time() - $sv_last > 180);
 ?>
-<dl><dt>Wächter:</dt><dd>
-  <?if (!$sv_need):?><span class="sv-dim">aus – keine Funktion eingeschaltet, die ihn braucht (Benachrichtigungen, Update-Hinweise, Rückkehr)</span>
-  <?elseif ($sv_late):?><span class="sv-bad">läuft nicht</span> <span class="sv-dim">– letzter Lauf: <?=htmlspecialchars($sv_ago($sv_last))?> · Einmal „Übernehmen“ drücken richtet den Cron-Eintrag neu ein.</span>
-  <?else:?><span class="sv-ok">läuft</span> <span class="sv-dim">– letzter Lauf: <?=htmlspecialchars($sv_ago($sv_last))?></span><?endif;?>
+<dl><dt><?=sv_e('Watchdog:')?></dt><dd>
+  <?if (!$sv_need):?><span class="sv-dim"><?=sv_e('off – no feature that needs it is switched on (notifications, update hints, return)')?></span>
+  <?elseif ($sv_late):?><span class="sv-bad"><?=sv_e('not running')?></span> <span class="sv-dim">– <?=sv_e('last run: {0}', $sv_ago($sv_last))?> · <?=sv_e('Pressing "Apply" once sets up the cron entry again.')?></span>
+  <?else:?><span class="sv-ok"><?=sv_e('running')?></span> <span class="sv-dim">– <?=sv_e('last run: {0}', $sv_ago($sv_last))?></span><?endif;?>
 </dd></dl>
-<dl><dt>CPU/RAM-Agent:</dt><dd>
-  <?if ($sv_cfg['STATS'] !== 'yes'):?><span class="sv-dim">aus</span>
-  <?elseif (!$sv_agent):?><span class="sv-warn">keine Daten</span>
+<dl><dt><?=sv_e('CPU/RAM agent:')?></dt><dd>
+  <?if ($sv_cfg['STATS'] !== 'yes'):?><span class="sv-dim"><?=sv_e('off')?></span>
+  <?elseif (!$sv_agent):?><span class="sv-warn"><?=sv_e('no data')?></span>
   <?else: foreach ($sv_agent as $h => $a):?><span class="<?=!empty($a['stale']) ? 'sv-warn' : 'sv-ok'?>" style="margin-right:14px"><?=htmlspecialchars($h)?>: <?=htmlspecialchars($sv_ago($a['ts'] ?? 0))?></span><?endforeach; endif;?>
 </dd></dl>
-<dl><dt>Letzte Update-Prüfung:</dt><dd><?=htmlspecialchars($sv_upd_when)?><?=$sv_upd_count ? " – <b class=\"sv-upd\">$sv_upd_count Update" . ($sv_upd_count === 1 ? '' : 's') . ' verfügbar</b>' : ''?></dd></dl>
+<dl><dt><?=sv_e('Last update check:')?></dt><dd><?=$sv_upd_html?></dd></dl>
 <?if (!empty($sv_mon['rebalance'])):?>
-<dl><dt>Laufende Rückkehr:</dt><dd><?=htmlspecialchars(implode(', ', array_map(fn($k, $v) => "$k → {$v['node']}", array_keys($sv_mon['rebalance']), $sv_mon['rebalance'])))?></dd></dl>
+<dl><dt><?=sv_e('Returns in progress:')?></dt><dd><?=htmlspecialchars(implode(', ', array_map(fn($k, $v) => "$k → {$v['node']}", array_keys($sv_mon['rebalance']), $sv_mon['rebalance'])))?></dd></dl>
 <?endif;?>
 <?if (!empty($sv_mon['alerts'])):?>
-<dl><dt>Offene Probleme:</dt><dd><?foreach ($sv_mon['alerts'] as $al):?><div><span class="sv-warn"><?=htmlspecialchars($al['subject'] ?? '')?></span> <span class="sv-dim">(aufgetreten <?=htmlspecialchars($sv_ago($al['since'] ?? 0))?><?=!empty($al['notified']) ? ', gemeldet' : ', noch nicht gemeldet – Verzögerung läuft'?>)</span></div><?endforeach;?></dd></dl>
+<dl><dt><?=sv_e('Open problems:')?></dt><dd><?foreach ($sv_mon['alerts'] as $al):?><div><span class="sv-warn"><?=htmlspecialchars($al['subject'] ?? '')?></span> <span class="sv-dim">(<?=!empty($al['notified']) ? sv_e('occurred {0}, notified', $sv_ago($al['since'] ?? 0)) : sv_e('occurred {0}, not notified yet – delay running', $sv_ago($al['since'] ?? 0))?>)</span></div><?endforeach;?></dd></dl>
 <?endif;?>
 
-<div class="sv-set-title"><i class="fa fa-list"></i> Letzte Meldungen und Ereignisse</div>
+<div class="sv-set-title"><i class="fa fa-list"></i> <?=sv_e('Latest notifications and events')?></div>
 <?php
   $sv_feed = [];
   foreach ($sv_mon['history'] ?? [] as $hst) $sv_feed[] = ['t' => $hst['t'], 'cls' => ['normal' => 'sv-ok', 'warning' => 'sv-warn', 'alert' => 'sv-bad'][$hst['level']] ?? '', 'icon' => 'fa-bell', 'text' => $hst['subject'] . ' – ' . $hst['desc']];
@@ -408,18 +418,18 @@ $sv_warn = function (array $n) use ($sv_ninfo, $sv_agent, $sv_cfg, $sv_self_engi
   usort($sv_feed, fn($x, $y) => $y['t'] <=> $x['t']);
   $sv_feed = array_slice($sv_feed, 0, 10);
 ?>
-<?if (!$sv_feed):?><p class="sv-dim">Noch nichts – der Wächter hat bisher nichts gemeldet oder verändert.</p>
+<?if (!$sv_feed):?><p class="sv-dim"><?=sv_e('Nothing yet – the watchdog has not reported or changed anything so far.')?></p>
 <?else:?><table class="sv-feed"><?foreach ($sv_feed as $f):?>
-  <tr><td class="sv-dim" style="white-space:nowrap"><?=date('d.m. H:i', (int)$f['t'])?></td><td><i class="fa <?=$f['icon']?> <?=$f['cls']?>"></i></td><td><?=htmlspecialchars($f['text'])?></td></tr>
+  <tr><td class="sv-dim" style="white-space:nowrap"><?=$sv_date($f['t'], true)?></td><td><i class="fa <?=$f['icon']?> <?=$f['cls']?>"></i></td><td><?=htmlspecialchars($f['text'])?></td></tr>
 <?endforeach;?></table><?endif;?>
 <blockquote class="inline_help">
-  Meldungen sind die Benachrichtigungen, die über Unraid verschickt wurden; Ereignisse sind Aktionen des Wächters (Rückkehr auf den bevorzugten Node, Update-Prüfungen). Der Verlauf liegt im RAM und ist nach einem Neustart von Unraid leer.
+  <?=sv_e('Notifications are the messages sent through Unraid; events are actions of the watchdog (return to the preferred node, update checks). The history is kept in RAM and is empty after a reboot of Unraid.')?>
 </blockquote>
 </div>
 
 <div class="sv-set-buttons">
-  <input type="button" id="sv-set-apply" value="Übernehmen" disabled>
-  <input type="button" id="sv-set-done" value="Fertig">
+  <input type="button" id="sv-set-apply" value="<?=sv_e('Apply')?>" disabled>
+  <input type="button" id="sv-set-done" value="<?=sv_e('Done')?>">
   <span id="sv-set-status" class="sv-dim"></span>
 </div>
 </div>
@@ -428,88 +438,97 @@ $sv_warn = function (array $n) use ($sv_ninfo, $sv_agent, $sv_cfg, $sv_self_engi
 (function ($) {
   'use strict';
   const ACTIONS = '/plugins/swarm-view/include/actions.php';
+  const DICT = window.SwarmViewLang || {};
+  const t = (s, ...a) => { let r = Object.prototype.hasOwnProperty.call(DICT, s) ? DICT[s] : s; a.forEach((v, i) => { r = r.split(`{${i}}`).join(v); }); return r; };
   const post = (d) => $.ajax({ url: ACTIONS, type: 'POST', data: d, dataType: 'json', timeout: 120000 });
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const show = (title, r) => {
-    const text = [r.error, r.log].filter(Boolean).join('\n\n') || (r.ok ? 'OK' : 'Fehler');
+    const text = [r.error, r.log].filter(Boolean).join('\n\n') || (r.ok ? 'OK' : t('Error'));
     if (typeof swal === 'function') setTimeout(() => swal({ title, text: `<pre class="sv-log">${esc(text)}</pre>`, html: true, type: r.ok ? 'success' : 'error' }), 150);
     else alert(`${title}\n\n${text}`);
   };
   const confirmBox = (title, text, cb, cancel) => {
-    if (typeof swal === 'function') swal({ title, text, type: 'warning', showCancelButton: true, confirmButtonText: 'Ja', cancelButtonText: 'Abbrechen' }, (ok) => (ok ? cb() : cancel && cancel()));
+    if (typeof swal === 'function') swal({ title, text, type: 'warning', showCancelButton: true, confirmButtonText: t('Yes'), cancelButtonText: t('Cancel') }, (ok) => (ok ? cb() : cancel && cancel()));
     else if (confirm(`${title}\n\n${text}`)) cb(); else if (cancel) cancel();
   };
-  const fail = (x) => ({ ok: false, error: `Anfrage fehlgeschlagen (${x.status || 'Timeout'})` });
+  const fail = (x) => ({ ok: false, error: t('Request failed ({0})', x.status || t('timeout')) });
 
-  // ---------- Tabs (gewählter Tab bleibt in der Sitzung) ----------
+  // ---------- tabs (the chosen tab stays for the session) ----------
   const TAB_KEY = 'swarmview_settings_tab';
-  const showTab = (t) => {
-    if (!$(`.sv-tab[data-tab="${t}"]`).length) t = 'general';
-    $('.sv-tab').hide().filter(`[data-tab="${t}"]`).show();
-    $('.sv-tabbtn').removeClass('active').filter(`[data-tab="${t}"]`).addClass('active');
-    try { sessionStorage.setItem(TAB_KEY, t); } catch (e) { /* egal */ }
+  const showTab = (tab) => {
+    if (!$(`.sv-tab[data-tab="${tab}"]`).length) tab = 'general';
+    $('.sv-tab').hide().filter(`[data-tab="${tab}"]`).show();
+    $('.sv-tabbtn').removeClass('active').filter(`[data-tab="${tab}"]`).addClass('active');
+    try { sessionStorage.setItem(TAB_KEY, tab); } catch (e) { /* ignore */ }
   };
   $('.sv-tabbtn').on('click', function (e) { e.preventDefault(); showTab($(this).data('tab')); });
   showTab((location.hash || '').slice(1) || (() => { try { return sessionStorage.getItem(TAB_KEY); } catch (e) { return null; } })() || 'general');
 
-  // ---------- Ungespeicherte Änderungen ----------
+  // ---------- unsaved changes ----------
   const FIELDS = 'select[id], input[type=number][id], input[type=text][id]';
+  const UNSAVED = t('Unsaved changes');
   const snapshot = () => JSON.stringify($('#sv-settings').find(FIELDS).map(function () { return [this.id, $(this).val()]; }).get());
   let saved = snapshot();
   const dirty = () => snapshot() !== saved;
   const syncDirty = () => {
     const d = dirty();
     $('#sv-set-apply').prop('disabled', !d);
-    if (d) $('#sv-set-status').attr('class', 'sv-warn').text('Ungespeicherte Änderungen');
-    else if ($('#sv-set-status').text() === 'Ungespeicherte Änderungen') $('#sv-set-status').text('');
+    if (d) $('#sv-set-status').attr('class', 'sv-warn').text(UNSAVED);
+    else if ($('#sv-set-status').text() === UNSAVED) $('#sv-set-status').text('');
   };
   $('#sv-settings').on('change input', FIELDS, syncDirty);
   window.addEventListener('beforeunload', (e) => { if (dirty()) { e.preventDefault(); e.returnValue = ''; } });
   $('#sv-set-done').on('click', () => {
-    if (dirty()) confirmBox('Änderungen verwerfen?', 'Es gibt ungespeicherte Änderungen.', () => { saved = snapshot(); done(); });
+    if (dirty()) confirmBox(t('Discard changes?'), t('There are unsaved changes.'), () => { saved = snapshot(); done(); });
     else done();
   });
 
   $('#sv-set-apply').on('click', function () {
-    const $b = $(this).prop('disabled', true);
+    $(this).prop('disabled', true);
     const d = { action: 'settings' };
     $('#sv-settings').find(FIELDS).each(function () { d[this.id] = $(this).val(); });
     const snap = snapshot();
-    $('#sv-set-status').attr('class', 'sv-dim').text('Speichere …');
+    $('#sv-set-status').attr('class', 'sv-dim').text(t('Saving …'));
     post(d)
       .done((r) => {
         if (r.ok) saved = snap;
-        $('#sv-set-status').attr('class', r.ok ? 'sv-ok' : 'sv-bad').text(r.ok ? 'Gespeichert.' : 'Nicht gespeichert.');
-        if (!r.ok || /Task-Historie|Heartbeat|Agent: gestartet|Agent konnte|Wächter/.test(r.log || '')) show('Swarm View', r);
+        $('#sv-set-status').attr('class', r.ok ? 'sv-ok' : 'sv-bad').text(r.ok ? t('Saved.') : t('Not saved.'));
+        if (!r.ok || r.notable) show('Swarm View', r);
+        if (r.ok && r.reload) setTimeout(() => location.reload(), r.notable ? 1500 : 300);   // language changed
       })
-      .fail((x) => { $('#sv-set-status').attr('class', 'sv-bad').text('Nicht gespeichert.'); show('Swarm View', fail(x)); })
+      .fail((x) => { $('#sv-set-status').attr('class', 'sv-bad').text(t('Not saved.')); show('Swarm View', fail(x)); })
       .always(() => syncDirty());
   });
 
   $('#sv-set-cleanup').on('click', function () {
     const $b = $(this);
-    confirmBox('Swarm aufräumen?', 'Löscht auf allen Nodes gestoppte Swarm-Container' + ($('#CLEANUP_IMAGES').val() === 'yes' ? ' und verwaiste Images' : '') + '. Laufende Container bleiben unberührt.', () => {
-      $b.prop('disabled', true).val('räumt auf …');
-      post({ action: 'cleanup' }).done((r) => show('Aufräumen', r)).fail((x) => show('Aufräumen', fail(x)))
-        .always(() => $b.prop('disabled', false).val('Aufräumen'));
+    const label = $b.val();
+    const text = $('#CLEANUP_IMAGES').val() === 'yes'
+      ? t('Deletes stopped Swarm containers and unused images on all nodes. Running containers are not touched.')
+      : t('Deletes stopped Swarm containers on all nodes. Running containers are not touched.');
+    confirmBox(t('Clean up Swarm?'), text, () => {
+      $b.prop('disabled', true).val(t('cleaning up …'));
+      post({ action: 'cleanup' }).done((r) => show(t('Cleanup'), r)).fail((x) => show(t('Cleanup'), fail(x)))
+        .always(() => $b.prop('disabled', false).val(label));
     });
   });
 
-  // Detail-Optionen nur zeigen, wenn die Funktion an ist
+  // show the detail options only while the feature is on
   const syncToggles = () => $('.sv-toggle').each(function () { $($(this).data('target')).toggle($(this).val() === 'yes'); });
   $('.sv-toggle').on('change', syncToggles);
   syncToggles();
 
   $('#sv-upd-now').on('click', function () {
-    const $b = $(this).prop('disabled', true).val('prüfe …');
+    const label = $(this).val();
+    const $b = $(this).prop('disabled', true).val(t('checking …'));
     post({ action: 'update-check' })
-      .done((r) => { show('Update-Prüfung', r); if (r.ok) $('#sv-upd-last').text('gerade eben'); })
-      .fail((x) => show('Update-Prüfung', fail(x)))
-      .always(() => $b.prop('disabled', false).val('Jetzt prüfen'));
+      .done((r) => { show(t('Update check'), r); if (r.ok) $('#sv-upd-last').text(t('just now')); })
+      .fail((x) => show(t('Update check'), fail(x)))
+      .always(() => $b.prop('disabled', false).val(label));
   });
 
   $('#sv-notify-test').on('click', function () {
-    post({ action: 'notify-test', level: 'normal' }).done((r) => show('Benachrichtigung', r)).fail((x) => show('Benachrichtigung', fail(x)));
+    post({ action: 'notify-test', level: 'normal' }).done((r) => show(t('Notification'), r)).fail((x) => show(t('Notification'), fail(x)));
   });
 
   $('.sv-avail').on('change', function () {
@@ -518,11 +537,11 @@ $sv_warn = function (array $n) use ($sv_ninfo, $sv_agent, $sv_cfg, $sv_self_engi
     const val = $s.val();
     const cur = String($s.data('current'));
     const texts = {
-      active: `${node} wieder normal nutzen?`,
-      pause: `${node} pausieren? Laufende Container bleiben, es werden aber keine neuen dort gestartet.`,
-      drain: `${node} in Wartung schicken? Alle Swarm-Container werden auf andere Nodes verschoben.`,
+      active: t('Use {0} normally again?', node),
+      pause: t('Pause {0}? Running containers stay, but no new ones are started there.', node),
+      drain: t('Put {0} into maintenance? All Swarm containers are moved to other nodes.', node),
     };
-    confirmBox('Node-Verfügbarkeit ändern', texts[val], () => {
+    confirmBox(t('Change node availability'), texts[val], () => {
       $s.prop('disabled', true);
       post({ action: 'node-availability', node, availability: val })
         .done((r) => { if (r.ok) $s.data('current', val); else { $s.val(cur); show('Node', r); } })

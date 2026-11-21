@@ -1,45 +1,61 @@
-/* Swarm View – Unraids Container-Liste: Host-Spalte, Container anderer Nodes, Kontextmenü, Logs, Folder View */
+/* Swarm View – Unraid's container list: host column, containers on other nodes, context menu, logs, Folder View */
 (function ($) {
   'use strict';
 
   const SV = window.SwarmView;
-  const { esc, cfg, localBadge, remoteBadge, findService, nodeCheck, placeSelect, placeService, post, failResult, showResult, confirmBox, openEditor, serviceAction } = SV;
+  const { t, tn, LANG, esc, cfg, localBadge, remoteBadge, findService, nodeCheck, placeSelect, placeService, post, failResult, showResult, confirmBox, openEditor, serviceAction } = SV;
 
-  /* ---------- 2) Unraids Container-Tabelle erweitern ---------- */
+  /* ---------- Extend Unraid's container table ---------- */
   let observer = null;
-  let remoteIndex = {};      // Element-ID → Task-Infos (für Kontextmenü/Logs)
+  let remoteIndex = {};      // element id → task info (for context menu/logs)
   const QUESTION_ICON = '/plugins/dynamix.docker.manager/images/question.png';
 
-  /* ---------- Zeiten auf Deutsch (wie Unraid: „Betriebszeit: 54 Minuten“, „Erstellt: vor 54 Minuten“) ---------- */
-  /** Wie Dockers HumanDuration (daraus übersetzt Unraid „Up 54 minutes“), nur auf Deutsch; dative = „vor 2 Tagen“ */
-  function durationDe(sec, dative) {
-    const pl = (n, one, many, manyDat) => `${n} ${n === 1 ? one : dative ? manyDat : many}`;
+  /* ---------- Times like Unraid ("Uptime: 54 minutes", "Created 54 minutes ago") ----------
+   * Like Docker's HumanDuration (Unraid translates "Up 54 minutes" from it). German needs the dative after "vor". */
+  function duration(sec, dative) {
     sec = Math.max(0, sec);
-    if (sec < 1) return dative ? 'weniger als einer Sekunde' : 'weniger als 1 Sekunde';
-    if (sec < 60) return pl(Math.floor(sec), 'Sekunde', 'Sekunden', 'Sekunden');
+    if (LANG === 'de') {
+      const pl = (n, one, many, manyDat) => `${n} ${n === 1 ? one : dative ? manyDat : many}`;
+      if (sec < 1) return dative ? 'weniger als einer Sekunde' : 'weniger als 1 Sekunde';
+      if (sec < 60) return pl(Math.floor(sec), 'Sekunde', 'Sekunden', 'Sekunden');
+      const min = Math.floor(sec / 60);
+      if (min === 1) return dative ? 'etwa einer Minute' : 'etwa 1 Minute';
+      if (min < 60) return pl(min, 'Minute', 'Minuten', 'Minuten');
+      const h = Math.round(sec / 3600);
+      if (h === 1) return dative ? 'etwa einer Stunde' : 'etwa 1 Stunde';
+      if (h < 48) return pl(h, 'Stunde', 'Stunden', 'Stunden');
+      if (h < 24 * 7 * 2) return pl(Math.floor(h / 24), 'Tag', 'Tage', 'Tagen');
+      if (h < 24 * 30 * 2) return pl(Math.floor(h / 24 / 7), 'Woche', 'Wochen', 'Wochen');
+      if (h < 24 * 365 * 2) return pl(Math.floor(h / 24 / 30), 'Monat', 'Monate', 'Monaten');
+      return pl(Math.floor(h / 24 / 365), 'Jahr', 'Jahre', 'Jahren');
+    }
+    const pl = (n, unit) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+    if (sec < 1) return 'less than a second';
+    if (sec < 60) return pl(Math.floor(sec), 'second');
     const min = Math.floor(sec / 60);
-    if (min === 1) return dative ? 'etwa einer Minute' : 'etwa 1 Minute';
-    if (min < 60) return pl(min, 'Minute', 'Minuten', 'Minuten');
+    if (min === 1) return 'about a minute';
+    if (min < 60) return pl(min, 'minute');
     const h = Math.round(sec / 3600);
-    if (h === 1) return dative ? 'etwa einer Stunde' : 'etwa 1 Stunde';
-    if (h < 48) return pl(h, 'Stunde', 'Stunden', 'Stunden');
-    if (h < 24 * 7 * 2) return pl(Math.floor(h / 24), 'Tag', 'Tage', 'Tagen');
-    if (h < 24 * 30 * 2) return pl(Math.floor(h / 24 / 7), 'Woche', 'Wochen', 'Wochen');
-    if (h < 24 * 365 * 2) return pl(Math.floor(h / 24 / 30), 'Monat', 'Monate', 'Monaten');
-    return pl(Math.floor(h / 24 / 365), 'Jahr', 'Jahre', 'Jahren');
+    if (h === 1) return 'about an hour';
+    if (h < 48) return pl(h, 'hour');
+    if (h < 24 * 7 * 2) return pl(Math.floor(h / 24), 'day');
+    if (h < 24 * 30 * 2) return pl(Math.floor(h / 24 / 7), 'week');
+    if (h < 24 * 365 * 2) return pl(Math.floor(h / 24 / 30), 'month');
+    return pl(Math.floor(h / 24 / 365), 'year');
   }
-  const since = (iso) => { const t = Date.parse(iso || ''); return isNaN(t) ? null : (Date.now() - t) / 1000; };
+  const since = (iso) => { const ms = Date.parse(iso || ''); return isNaN(ms) ? null : (Date.now() - ms) / 1000; };
   const timesHtml = (r) => {
     const up = since(r.since), cr = since(r.created);
-    const first = r.running ? (up != null ? `Betriebszeit: ${durationDe(up)}` : 'läuft')
-      : `${esc(String(r.current).split(' ')[0] || 'Beendet')}${up != null ? `: vor ${durationDe(up, true)}` : ''}`;
-    return `<div style="white-space:nowrap">${first}${cr != null ? `<div style="margin-top:4px">Erstellt: vor ${durationDe(cr, true)}</div>` : ''}</div>`;
+    const state = String(r.current).split(' ')[0] || t('Stopped');
+    const first = r.running ? (up != null ? t('Uptime: {0}', duration(up)) : t('running'))
+      : (up != null ? t('{0}: {1} ago', state, duration(up, true)) : state);
+    return `<div style="white-space:nowrap">${esc(first)}${cr != null ? `<div style="margin-top:4px">${esc(t('Created {0} ago', duration(cr, true)))}</div>` : ''}</div>`;
   };
 
-  /* ---------- Anzeigename (Label swarm-view.name) ----------
-   * Swarm vergibt Containernamen selbst (service.slot.task-id), container_name wird ignoriert.
-   * Der echte Name bleibt als Text im DOM – Folder View, Autostart-Reihenfolge und Unraids Menüs
-   * arbeiten damit weiter. Angezeigt wird per CSS (::before) nur der Anzeigename. */
+  /* ---------- Display name (label swarm-view.name) ----------
+   * Swarm names containers itself (service.slot.task-id) and ignores container_name.
+   * The real name stays as text in the DOM – Folder View, autostart order and Unraid's menus keep
+   * working with it. CSS (::before) shows only the display name. */
   function aliasFor(sv, slot) {
     if (!sv || !sv.alias) return '';
     return (sv.desired || 0) > 1 && slot ? `${sv.alias}.${slot}` : sv.alias;
@@ -55,7 +71,7 @@
     el.setAttribute('data-sv-alias', alias);
     el.setAttribute('title', `Container: ${realName}`);
   }
-  /** echter Name → Anzeigename, für Ordner-Vorschauen von Folder View */
+  /** real name → display name, for Folder View's folder previews */
   function aliasMap() {
     const m = new Map();
     for (const r of Object.values(remoteIndex)) if (r.alias) m.set(r.name, r.alias);
@@ -67,13 +83,13 @@
     return m;
   }
 
-  const SWARM_STOP_HINT = 'Swarm-Container: Stoppen über Unraid hält nicht – Swarm startet ihn neu. Zum Anhalten „Stack Down“ in der Swarm-Leiste nutzen.';
+  const SWARM_STOP_HINT = t('Swarm container: stopping it in Unraid does not last – Swarm starts it again. Use "Stack Down" in the Swarm section to stop it.');
   const shortSvc = (svc, stack) => (stack && svc.startsWith(stack + '_') ? svc.slice(stack.length + 1) : svc);
 
   function hostCell(name) {
     if (!SV.data) return '<span class="sv-dim">…</span>';
     const c = (SV.data.containers || {})[name] || {};
-    if (!c.swarmService) return '<span class="sv-dim sv-small" title="Normaler Container auf diesem Server (nicht Swarm)">lokal</span>';
+    if (!c.swarmService) return `<span class="sv-dim sv-small" title="${esc(t('Regular container on this server (not Swarm)'))}">${esc(t('local'))}</span>`;
     let html = localBadge(SV.data.host);
     html += `<div class="sv-dim" style="margin-top:4px;white-space:nowrap"><i class="fa fa-cubes"></i> Swarm: ${esc(c.swarmStack || '–')} / ${esc(shortSvc(c.swarmService, c.swarmStack))}</div>`;
     const sel = placeSelect(findService(c.swarmService));
@@ -81,7 +97,7 @@
     return html;
   }
 
-  /** WebUI-URL wie bei Unraid: [IP] → Unraid-IP (Routing-Mesh), [PORT:x] → veröffentlichter Port */
+  /** WebUI URL like Unraid: [IP] → Unraid IP (routing mesh), [PORT:x] → published port */
   function webUiFor(sv) {
     const host = location.hostname;
     const pubFor = (target) => {
@@ -89,32 +105,32 @@
       return p ? p.published : target;
     };
     const tpl = (sv.labels || {})['net.unraid.docker.webui'];
-    if (tpl) return tpl.replace(/\[IP\]/g, host).replace(/\[PORT:(\d+)\]/g, (m, t) => pubFor(t));
+    if (tpl) return tpl.replace(/\[IP\]/g, host).replace(/\[PORT:(\d+)\]/g, (m, p) => pubFor(p));
     const first = (sv.portList || []).find((p) => p.published && p.proto === 'tcp');
     return first ? `http://${host}:${first.published}` : '';
   }
 
-  /** Alle Swarm-Tasks, die NICHT auf diesem Host laufen – mit stabilem Namen stack_service.slot */
+  /** All Swarm tasks NOT running on this host – with a stable name stack_service.slot */
   function remoteTasks() {
     if (!SV.data || !SV.data.swarm.active) return [];
     const managed = new Set(SV.data.managed || []);
     const out = [];
     for (const st of SV.data.stacks) {
       for (const sv of st.services) {
-        for (const t of sv.tasks) {
-          if (!t.node || t.local || !t.id) continue;
+        for (const tk of sv.tasks) {
+          if (!tk.node || tk.local || !tk.id) continue;
           const image = String(sv.image || '');
           out.push({
-            elId: `sv-${t.id.slice(0, 12)}`,
-            sid: `sv${t.id.slice(0, 10)}`, // „Kurz-ID“ wie bei Unraid: CPU/RAM-Spans und Folder View hängen daran
-            name: `${sv.name}.${t.slot}`,
-            taskId: t.id,
+            elId: `sv-${tk.id.slice(0, 12)}`,
+            sid: `sv${tk.id.slice(0, 10)}`, // "short id" like Unraid's: CPU/RAM spans and Folder View use it
+            name: `${sv.name}.${tk.slot}`,
+            taskId: tk.id,
             service: sv.name,
-            stack: st.name === '(ohne Stack)' ? '' : st.name,
+            stack: st.name === '(no stack)' ? '' : st.name,
             managed: managed.has(st.name),
-            node: t.node,
-            running: /^running/i.test(t.current),
-            current: t.current,
+            node: tk.node,
+            running: /^running/i.test(tk.current),
+            current: tk.current,
             image,
             tag: image.includes(':') ? image.split(':').pop() : 'latest',
             icon: (sv.labels || {})['net.unraid.docker.icon'] || QUESTION_ICON,
@@ -126,13 +142,13 @@
             update: sv.update,
             canRollback: sv.canRollback,
             rollbackTo: sv.rollbackTo || '',
-            stats: ((SV.data.stats || {}).tasks || {})[t.id] || null,
+            stats: ((SV.data.stats || {}).tasks || {})[tk.id] || null,
             short: sv.short || sv.name,
-            alias: aliasFor(sv, t.slot),
-            created: t.created || '',
-            since: t.since || '',
-            containerId: t.containerId || '',
-            networks: t.networks || [],
+            alias: aliasFor(sv, tk.slot),
+            created: tk.created || '',
+            since: tk.since || '',
+            containerId: tk.containerId || '',
+            networks: tk.networks || [],
           });
         }
       }
@@ -140,7 +156,7 @@
     return out;
   }
 
-  /** Zeile im selben Markup wie Unraids DockerContainers.php (damit Folder View & Co. sie verstehen) */
+  /** Row with the same markup as Unraid's DockerContainers.php (so Folder View & co. understand it) */
   function remoteRowCells(r) {
     const host = location.hostname;
     const dash = '<span class="sv-dim">–</span>';
@@ -150,16 +166,15 @@
       `${esc(m.target)}<i class="fa fa-${m.ro ? 'long-arrow-left' : 'arrows-h'}" style="margin:0 6px"></i>${esc(m.source)}`).join('<br>') || dash;
     const nets = r.networks.map((n) => esc(n.name)).join('<br>') || dash;
     const ips = r.networks.map((n) => esc(n.addr)).filter(Boolean).join('<br>') || dash;
-    const upd = r.update ? '<span class="orange-text" style="white-space:nowrap"><i class="fa fa-flash fa-fw"></i> Update verfügbar</span>'
-      : r.update === false ? '<span class="green-text" style="white-space:nowrap"><i class="fa fa-check fa-fw"></i> aktuell</span>' : '';
+    const upd = updateLine(r.update);
     const by = r.image.replace(/:[^:/]*$/, '');
     return `
       <td class="ct-name" style="width:220px;padding:8px"><i class="fa fa-arrows-v mover orange-text"></i>
         <span class="outer"><span id="${r.elId}" onclick="svRemoteContext('${r.elId}')" class="hand"><img src="${esc(r.icon)}" class="img" onerror="this.onerror=null;this.src='${QUESTION_ICON}';"></span>
         <span class="inner"><span class="appname" id="${r.elId}-n" onclick="svRemoteContext('${r.elId}', this.id)"${r.alias ? ` data-sv-alias="${esc(r.alias)}" title="Container: ${esc(r.name)}"` : ''}><a class="sv-name">${esc(r.name)}</a></span><br>
-          <i id="load-${r.elId}" class="fa fa-${r.running ? 'play started green-text' : 'square stopped orange-text'}"></i><span class="state" title="${esc(SWARM_STOP_HINT)}">${r.running ? 'Gestartet' : esc(r.current.split(' ')[0] || '?')}<br/>Swarm: ${esc(r.stack || '–')} / ${esc(r.short)}</span>
+          <i id="load-${r.elId}" class="fa fa-${r.running ? 'play started green-text' : 'square stopped orange-text'}"></i><span class="state" title="${esc(SWARM_STOP_HINT)}">${r.running ? esc(t('started')) : esc(r.current.split(' ')[0] || '?')}<br/>Swarm: ${esc(r.stack || '–')} / ${esc(r.short)}</span>
         </span></span>
-        <div class="sv-adv" style="margin-top:8px">${r.containerId ? `Container-ID: ${esc(r.containerId)}` : `Task-ID: ${esc(r.taskId.slice(0, 12))}`}<br>Von: ${esc(by)}</div>
+        <div class="sv-adv" style="margin-top:8px">${esc(r.containerId ? t('Container ID: {0}', r.containerId) : t('Task ID: {0}', r.taskId.slice(0, 12)))}<br>${esc(t('By: {0}', by))}</div>
       </td>
       <td class="updatecolumn">${upd}<div class="sv-adv" style="white-space:nowrap"><i class="fa fa-info-circle fa-fw"></i> ${esc(r.tag)}</div></td>
       <td style="white-space:nowrap">${nets}</td>
@@ -173,9 +188,16 @@
       <td class="sv-times">${timesHtml(r)}</td>`;
   }
 
+  /** Version column: update status (only when the update check is on) */
+  function updateLine(u) {
+    if (u) return `<span class="orange-text" style="white-space:nowrap"><i class="fa fa-flash fa-fw"></i> ${esc(t('Update available'))}</span>`;
+    if (u === false) return `<span class="green-text" style="white-space:nowrap"><i class="fa fa-check fa-fw"></i> ${esc(t('up-to-date'))}</span>`;
+    return '';
+  }
+
   const rowSig = (r, mode) => JSON.stringify(Object.assign({}, r, { stats: null })) + mode + cfg().hostColumn;
 
-  /* ---------- CPU/RAM: Pi-Container wie Unraids Zeilen, Ordner-Summen für Folder View ---------- */
+  /* ---------- CPU/RAM: remote containers like Unraid's rows, folder totals for Folder View ---------- */
   const UNITS = { B: 1, KiB: 2 ** 10, MiB: 2 ** 20, GiB: 2 ** 30, TiB: 2 ** 40, kB: 1e3, KB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12 };
   const memToB = (m) => {
     const x = String(m || '').trim().match(/^([\d.,]+)\s*([A-Za-z]*)$/);
@@ -190,15 +212,15 @@
   const selfNode = () => (SV.data.nodes || []).find((n) => n.self) || {};
   const nodeCpus = (host) => ((SV.data.nodes || []).find((n) => n.hostname === host) || {}).cpus || 0;
 
-  /** Werte eines Pi-Containers: cpu = % der CPUs seines Nodes (wie Unraid), cores = belegte Kerne */
+  /** Values of a remote container: cpu = % of its node's CPUs (like Unraid), cores = cores in use */
   function remoteLoad(r) {
     const st = r.stats;
     if (!st) return null;
     const ncpu = st.ncpu || nodeCpus(r.node) || 1;
-    const raw = parseFloat(String(st.cpu).replace(',', '.')) || 0;   // docker stats: 100 % = 1 Kern
+    const raw = parseFloat(String(st.cpu).replace(',', '.')) || 0;   // docker stats: 100 % = 1 core
     const [used, lim] = String(st.mem || '').split('/').map((x) => x.trim());
     const usedB = memToB(used);
-    // "0B / 0B": Docker auf dem Node misst keinen Speicher (cgroup_enable=memory fehlt, typisch beim Pi)
+    // "0B / 0B": Docker on that node measures no memory (memory cgroup off, typical on a Raspberry Pi)
     const noMem = !memToB(lim);
     const limB = noMem ? 0 : memToB(lim);
     return { node: r.node, ncpu, cores: raw / 100, cpu: Math.min(raw / ncpu, 100), usedB, limB, memText: st.mem || '', noMem };
@@ -211,22 +233,22 @@
       const l = remoteLoad(r);
       const $cpu = $(`span.cpu-${r.sid}`), $mem = $(`span.mem-${r.sid}`), $bar = $(`[id="cpu-${r.sid}"]`);
       if (!l) {
-        $cpu.text(enabled ? '…' : '–'); $mem.text(enabled ? '…' : '–').attr('title', enabled ? 'Noch keine Werte vom Agenten' : 'CPU/RAM-Agent ist in den Einstellungen aus');
+        $cpu.text(enabled ? '…' : '–'); $mem.text(enabled ? '…' : '–').attr('title', enabled ? t('No values from the agent yet') : t('The CPU/RAM agent is off in the settings'));
         $bar.css('width', 0);
         continue;
       }
       $cpu.text(pct(l.cpu)); $bar.css('width', pct(l.cpu));
-      if (l.noMem) $mem.text('RAM nicht messbar').attr('title', `Docker auf ${r.node} misst keinen Speicher: cgroup_enable=memory fehlt in /boot/firmware/cmdline.txt`);
+      if (l.noMem) $mem.text(t('RAM not measurable')).attr('title', t('Docker on {0} measures no memory: cgroup_enable=memory is missing in /boot/firmware/cmdline.txt', r.node));
       else $mem.text(l.memText).attr('title', r.stats.memApprox
-        ? `Geschätzt aus dem Speicher der Prozesse (RSS) – Docker auf ${r.node} misst keinen Container-Speicher (Speicher-cgroup aus)`
-        : `CPU-Wert bezogen auf ${l.ncpu} Kerne von ${r.node}`);
+        ? t("Estimated from the processes' memory (RSS) – Docker on {0} measures no container memory (memory cgroup off)", r.node)
+        : t('CPU value relative to {0} cores of {1}', l.ncpu, r.node));
     }
   }
 
   /**
-   * Folder View rechnet CPU/RAM eines Ordners nur aus Unraids lokalen Messwerten. Wenn es seine Summe
-   * schreibt, merken wir uns den lokalen Wert und schreiben – je nach Einstellung – die Summe über alle
-   * Nodes darüber. Die Aufteilung pro Node steht im Tooltip.
+   * Folder View computes a folder's CPU/RAM only from Unraid's local values. When it writes its sum,
+   * we remember the local value and – depending on the setting – write the sum over all nodes on top.
+   * The split per node goes into the tooltip.
    */
   function folderParts(id, $row) {
     const remote = $(`tr.sv-remote-row.folder-${id}-element`).get().map((tr) => {
@@ -252,24 +274,24 @@
     const anyRemote = $(`tr.sv-remote-row.folder-${id}-element`).length > 0;
     if (!anyRemote) { $td.removeAttr('title'); return; }
 
-    // Pro Node zusammenfassen
+    // sum up per node
     const me = selfNode();
     const per = new Map();
-    if (hasLocal) per.set(me.hostname || 'lokal', { cores: local.cpu / 100 * (me.cpus || 1), ncpu: me.cpus || 1, used: local.mem[0] || 0, lim: local.mem[1] || 0 });
+    if (hasLocal) per.set(me.hostname || t('local'), { cores: local.cpu / 100 * (me.cpus || 1), ncpu: me.cpus || 1, used: local.mem[0] || 0, lim: local.mem[1] || 0 });
     for (const l of remote) {
       const e = per.get(l.node) || { cores: 0, ncpu: l.ncpu, used: 0, lim: 0, noMem: false };
       e.cores += l.cores; e.used += l.usedB; e.lim = Math.max(e.lim, l.limB); e.noMem = e.noMem || l.noMem;
       per.set(l.node, e);
     }
-    const lines = [...per].map(([n, e]) => `${n}: ${pct(e.cores / e.ncpu * 100)} von ${e.ncpu} Kernen · `
-      + (e.noMem ? 'RAM nicht messbar (cgroup_enable=memory fehlt)' : `${bToMem(e.used)}${e.lim ? ' / ' + bToMem(e.lim) : ''}`));
+    const lines = [...per].map(([n, e]) => `${n}: ${t('{0} of {1} cores', pct(e.cores / e.ncpu * 100), e.ncpu)} · `
+      + (e.noMem ? t('RAM not measurable (cgroup_enable=memory missing)') : `${bToMem(e.used)}${e.lim ? ' / ' + bToMem(e.lim) : ''}`));
     const missing = $(`tr.sv-remote-row.folder-${id}-element`).length - remote.length;
-    if (missing > 0) lines.push(`(${missing} Container ohne Messwerte)`);
+    if (missing > 0) lines.push(`(${tn(missing, '{0} container without values', '{0} containers without values')})`);
 
     if (cfg().folderLoad === 'local') {
-      // Zurück zu Folder Views Werten, falls wir vorher die Summe geschrieben hatten
+      // back to Folder View's values in case we wrote the sum before
       for (const $s of [$c, $m]) if ($s.attr('data-sv-written') && $s.text() === $s.attr('data-sv-written')) $s.text($s.attr('data-sv-local'));
-      $td.attr('title', `Nur lokal. Mit anderen Nodes:\n${lines.join('\n')}`);
+      $td.attr('title', `${t('Local only. With other nodes:')}\n${lines.join('\n')}`);
       return;
     }
     let cores = 0, ncpu = 0, used = 0, lim = 0;
@@ -281,7 +303,7 @@
     $c.attr('data-sv-written', cpuText).text(cpuText);
     $m.attr('data-sv-written', memText).text(memText);
     $row.find(`[id="cpu-folder-${id}"]`).css('width', cpuText);
-    $td.attr('title', `Gesamt über ${per.size} Node${per.size === 1 ? '' : 's'} (${ncpu} Kerne):\n${lines.join('\n')}`);
+    $td.attr('title', `${tn(per.size, 'Total over {0} node', 'Total over {0} nodes')} (${t('{0} cores', ncpu)}):\n${lines.join('\n')}`);
   }
 
   function watchFolder(row) {
@@ -290,7 +312,7 @@
       for (const mu of muts) {
         const span = mu.target.nodeType === 1 ? mu.target : mu.target.parentElement;
         if (!span || !/(?:^|\s)(cpu|mem)-folder-/.test(span.className)) continue;
-        // Nicht unser eigener Schreibvorgang → Folder View hat neue lokale Werte geliefert
+        // not our own write → Folder View delivered new local values
         if (span.textContent !== span.getAttribute('data-sv-written')) span.setAttribute('data-sv-local', span.textContent);
       }
       if (muts.some((mu) => { const sp = mu.target.nodeType === 1 ? mu.target : mu.target.parentElement; return sp && sp.textContent !== sp.getAttribute('data-sv-written'); })) updateFolder(row);
@@ -307,7 +329,7 @@
     $('#docker_list > tr.folder').each(function () { watchFolder(this); updateFolder(this); });
   }
 
-  /** Pi-Container im DOM aktuell halten – Zeilen bleiben erhalten (auch wenn Folder View sie in Ordner verschoben hat) */
+  /** Keep remote containers in the DOM up to date – rows are kept (even when Folder View moved them into folders) */
   function syncRemoteRows() {
     const list = document.getElementById('docker_list');
     if (!list) return;
@@ -336,16 +358,15 @@
       tr.innerHTML = remoteRowCells(r);
       list.appendChild(tr);
     }
-    // Mover nur zeigen, wenn Unraids Sortierung entsperrt ist
+    // show the mover only when Unraid's sorting is unlocked
     $(list).find('tr.sv-remote-row i.mover').toggle($.cookie && $.cookie('lockbutton') != null);
   }
 
   /**
-   * Folder-View-Ordnerzeile an die Host-Spalte anpassen (F2).
-   * Folder View setzt die Breite seiner Sammelzelle auf „Spaltenzahl − 5“ bzw. bei der Ordner-Option
-   * „Update-Spalte“ fest auf 6. Beides geht von 10 Spalten aus. Statt mit einer festen Zahl zu rechnen,
-   * wird die CPU-Zelle des Ordners auf die Position der Spalte „Prozessor/Speicher“ geschoben und
-   * dahinter eine leere Host-Zelle eingefügt.
+   * Adapt a Folder View folder row to the host column.
+   * Folder View sets the width of its wide cell to "number of columns − 5", or fixed to 6 with the folder
+   * option "update column". Both assume 10 columns. Instead of a fixed number, the folder's CPU cell is
+   * moved to the position of the "CPU & Memory load" column and an empty host cell is added after it.
    */
   function fixFolderRow(tr, $tbl) {
     const ths = $tbl.find('thead tr').first().children('th').get();
@@ -366,15 +387,14 @@
     if (!$(cpu).next('td.sv-hostcol').length) $(cpu).after('<td class="sv-adv sv-hostcol"></td>');
   }
 
-  /** Lokale Swarm-Container in Unraids Liste: Update-Status (C5) und Hinweis zu Start/Stopp (C6) */
+  /** Local Swarm containers in Unraid's list: update status, start/stop hint, display name */
   function localSwarmRow($tr) {
     const name = $tr.find('.appname').first().text().trim();
     const c = SV.data && (SV.data.containers || {})[name];
     if (!c || !c.swarmService) return;
     const sv = findService(c.swarmService) || {};
     const $u = $tr.children('td.updatecolumn');
-    const html = sv.update ? '<span class="orange-text" style="white-space:nowrap"><i class="fa fa-flash fa-fw"></i> Update verfügbar</span>'
-      : sv.update === false ? '<span class="green-text" style="white-space:nowrap"><i class="fa fa-check fa-fw"></i> aktuell</span>' : '';
+    const html = updateLine(sv.update);
     let $line = $u.children('div.sv-updline');
     if (!$line.length) $line = $('<div class="sv-updline"></div>').prependTo($u);
     if ($line.html() !== html) $line.html(html);
@@ -382,7 +402,7 @@
     setAlias($tr.find('td.ct-name .appname').get(0), aliasFor(sv, (name.slice(c.swarmService.length + 1).split('.')[0]) || ''), name);
   }
 
-  /* ---------- Verwaiste Images (Unraid: tr.advanced mit addDockerImageContext) ausblenden ---------- */
+  /* ---------- Hide orphan images (Unraid: tr.advanced with addDockerImageContext) ---------- */
   const ORPHAN_KEY = 'swarmview_orphans_show';
   const normImg = (s) => String(s || '').trim().replace(/@sha256:[0-9a-f]+$/i, '').replace(/^docker\.io\//, '').replace(/^library\//, '')
     .replace(/^([^/:]+)$/, '$1:latest').replace(/^([^:]*\/[^/:]+)$/, '$1:latest');
@@ -397,29 +417,30 @@
     let reserve = 0, old = 0, other = 0;
     const hide = $rows.filter(function () {
       const m = String($(this).find('span[onclick^="addDockerImageContext"]').attr('onclick')).match(/addDockerImageContext\('[^']*','([^']*)'\)/);
-      const tags = (m ? m[1] : '').split(',').map((t) => t.trim()).filter(Boolean);
+      const tags = (m ? m[1] : '').split(',').map((x) => x.trim()).filter(Boolean);
       if (!tags.length) { old++; return true; }
-      if (tags.some((t) => swarmImgs.has(normImg(t)))) { reserve++; return true; }
+      if (tags.some((x) => swarmImgs.has(normImg(x)))) { reserve++; return true; }
       if (mode === 'hide') { other++; return true; }
       return false;
     });
     if (!hide.length) return;
     let show = false;
-    try { show = sessionStorage.getItem(ORPHAN_KEY) === '1'; } catch (e) { /* egal */ }
+    try { show = sessionStorage.getItem(ORPHAN_KEY) === '1'; } catch (e) { /* ignore */ }
     if (!show) hide.addClass('sv-orphan-hidden');
-    const parts = [reserve && `${reserve} Reserve für Swarm-Services`, old && `${old} alte Version${old === 1 ? '' : 'en'} ohne Namen`, other && `${other} weitere`].filter(Boolean);
+    const parts = [reserve && tn(reserve, '{0} reserve for Swarm services', '{0} reserve for Swarm services'),
+      old && tn(old, '{0} old version without name', '{0} old versions without name'), other && t('{0} other', other)].filter(Boolean);
     const cols = $tbl.find('thead tr').first().children('th').length || 10;
     const $sum = $(`<tr class="sv-orphan-sum advanced"><td colspan="${cols}"><a href="#" class="sv-orphan-toggle"><i class="fa fa-eye${show ? '-slash' : ''} fa-fw"></i>
-      ${hide.length} verwaiste Image${hide.length === 1 ? '' : 's'} ${show ? 'eingeblendet' : 'ausgeblendet'}</a> <span class="sv-dim">(${parts.join(', ')}) · ${show ? 'wieder ausblenden' : 'anzeigen'}</span></td></tr>`);
+      ${esc(show ? tn(hide.length, '{0} orphan image shown', '{0} orphan images shown') : tn(hide.length, '{0} orphan image hidden', '{0} orphan images hidden'))}</a> <span class="sv-dim">(${esc(parts.join(', '))}) · ${esc(show ? t('hide again') : t('show'))}</span></td></tr>`);
     $sum.insertBefore(hide.first());
-    // Unraid blendet .advanced beim Ansichtswechsel per jQuery ein/aus – die Zeile folgt der Ansicht wie die Image-Zeilen
+    // Unraid toggles .advanced via jQuery when the view changes – the row follows the view like the image rows
     $sum.toggle(isAdvancedView());
   }
   const isAdvancedView = () => $('body').hasClass('sv-advanced');
   $(document).on('click', '.sv-orphan-toggle, .sv-orphan-sum .sv-dim', function (e) {
     e.preventDefault();
     let show = false;
-    try { show = sessionStorage.getItem(ORPHAN_KEY) === '1'; sessionStorage.setItem(ORPHAN_KEY, show ? '0' : '1'); } catch (er) { /* egal */ }
+    try { show = sessionStorage.getItem(ORPHAN_KEY) === '1'; sessionStorage.setItem(ORPHAN_KEY, show ? '0' : '1'); } catch (er) { /* ignore */ }
     hideOrphans($('#docker_containers'));
   });
 
@@ -432,11 +453,11 @@
 
     const withHost = cfg().hostColumn;
     if (!withHost) {
-      // Spalte (falls vorher aktiv) wieder entfernen
+      // remove the column (if it was active before)
       $tbl.find('thead th.sv-hostcol').remove();
       $('#docker_list > tr:not(.sv-remote-row)').children('td.sv-hostcol').remove();
     }
-    // Kopfzeile: "Host" hinter "CPU & Memory load"
+    // header: "Host" after "CPU & Memory load"
     if (withHost && !$tbl.find('thead th.sv-hostcol').length) {
       const $load = $tbl.find('thead th.load');
       const $th = $('<th class="sv-adv sv-hostcol">Host</th>');
@@ -445,8 +466,8 @@
 
     $('#docker_list > tr').each(function () {
       const $tr = $(this);
-      if ($tr.hasClass('sv-remote-row')) return;                              // eigene Zeilen
-      if ($tr.hasClass('folder')) { if (withHost) fixFolderRow(this, $tbl); return; } // Folder-View-Ordner
+      if ($tr.hasClass('sv-remote-row')) return;                              // our own rows
+      if ($tr.hasClass('folder')) { if (withHost) fixFolderRow(this, $tbl); return; } // Folder View folder
       if ($tr.hasClass('sortable') && /^swarm-view-(agent|cleanup)\./.test($tr.find('.appname').first().text().trim())) {
         $tr.hide().next('tr.advanced').hide();
         return;
@@ -471,13 +492,13 @@
     syncRemoteRows();
     updateLoads();
     hideOrphans($tbl);
-    // Schriftgröße für Anzeigenamen der eigenen Zeilen von einem normalen Namen übernehmen
+    // font size for display names in our own rows: take it from a normal name
     const ref = $('#docker_list tr:not(.sv-remote-row) .appname:not([data-sv-alias])').get(0);
     const fs = ref ? getComputedStyle(ref).fontSize : '';
     $('#docker_list tr.sv-remote-row .appname[data-sv-alias]').each(function () {
       if (!this.style.getPropertyValue('--sv-fs')) this.style.setProperty('--sv-fs', fs || getComputedStyle(this.parentElement).fontSize);
     });
-    // Ordner-Vorschauen von Folder View (geklonte Namen) ebenfalls umbenennen
+    // rename Folder View's folder previews (cloned names) as well
     const am = aliasMap();
     $('#docker_list .folder-preview span.appname').each(function () {
       const real = $(this).text().trim();
@@ -488,7 +509,7 @@
     observer.observe(list, { childList: true });
   }
 
-  /* ---------- Kontextmenü für Pi-Container (wie Unraids addDockerContainerContext) ---------- */
+  /* ---------- Context menu for remote containers (like Unraid's addDockerContainerContext) ---------- */
   window.svRemoteContext = function (elId, target) {
     const r = remoteIndex[elId];
     if (!r || typeof context === 'undefined') return;
@@ -498,14 +519,14 @@
       opts.push({ divider: true });
     }
     if (r.update) opts.push({ text: 'Update', icon: 'fa-flash', action: (e) => { e.preventDefault(); serviceAction('svc-update', r.service); } });
-    if (r.canRollback) opts.push({ text: `Rollback auf ${r.rollbackTo || 'vorherige Version'}`, icon: 'fa-undo', action: (e) => { e.preventDefault(); serviceAction('svc-rollback', r.service); } });
+    if (r.canRollback) opts.push({ text: t('Rollback to {0}', r.rollbackTo || t('previous version')), icon: 'fa-undo', action: (e) => { e.preventDefault(); serviceAction('svc-rollback', r.service); } });
     opts.push({
-      text: 'Neustart', icon: 'fa-refresh', action: (e) => {
+      text: t('Restart'), icon: 'fa-refresh', action: (e) => {
         e.preventDefault();
-        confirmBox(`„${r.service}“ neu starten?`, 'Der Service wird mit --force neu ausgerollt (alle Replicas).', () => {
+        confirmBox(t('Restart "{0}"?', r.service), t('The service is rolled out again with --force (all replicas).'), () => {
           post({ action: 'svc-restart', service: r.service })
-            .done((res) => showResult(`Neustart: ${r.service}`, res))
-            .fail((x) => showResult(`Neustart: ${r.service}`, failResult(x)))
+            .done((res) => showResult(t('Restart: {0}', r.service), res))
+            .fail((x) => showResult(t('Restart: {0}', r.service), failResult(x)))
             .always(() => { SV.load(); setTimeout(SV.load, 4000); });
         });
       },
@@ -514,28 +535,28 @@
     if (svObj && svObj.mode !== 'global' && SV.data.nodes.length > 1) {
       for (const n of SV.data.nodes) {
         if (n.hostname === r.node || !nodeCheck(svObj, n).ok) continue;
-        opts.push({ text: `Auf ${n.hostname} verschieben (fest)`, icon: 'fa-exchange', action: (e) => { e.preventDefault(); placeService(svObj.name, `fixed:${n.hostname}`); } });
+        opts.push({ text: t('Move to {0} (fixed)', n.hostname), icon: 'fa-exchange', action: (e) => { e.preventDefault(); placeService(svObj.name, `fixed:${n.hostname}`); } });
       }
     }
     opts.push({ divider: true });
     opts.push({ text: 'Logs', icon: 'fa-navicon', action: (e) => { e.preventDefault(); openLogs(r); } });
     if (r.managed) {
       opts.push({
-        text: 'Stack bearbeiten', icon: 'fa-wrench', action: (e) => {
+        text: t('Edit stack'), icon: 'fa-wrench', action: (e) => {
           e.preventDefault();
           openEditor(r.stack);
         },
       });
     }
     opts.push({ divider: true });
-    opts.push({ text: `Läuft auf: ${r.node}`, icon: 'fa-external-link', action: (e) => e.preventDefault() });
+    opts.push({ text: t('Runs on: {0}', r.node), icon: 'fa-external-link', action: (e) => e.preventDefault() });
     context.settings({ right: false, above: false });
     const sel = '#' + (target || elId);
     context.destroy(sel);
     context.attach(sel, opts);
   };
 
-  /* ---------- Log-Fenster ---------- */
+  /* ---------- Log window ---------- */
   let logTask = null;
   function ensureLogBox() {
     if ($('#sv-logbox').length) return;
@@ -543,8 +564,8 @@
       <div class="sv-logbox-inner">
         <div class="sv-logbox-head"><b id="sv-logbox-title"></b>
           <span class="sv-right">
-            <input type="button" id="sv-logbox-refresh" value="Aktualisieren">
-            <input type="button" id="sv-logbox-close" value="Schließen">
+            <input type="button" id="sv-logbox-refresh" value="${esc(t('Refresh'))}">
+            <input type="button" id="sv-logbox-close" value="${esc(t('Close'))}">
           </span></div>
         <pre id="sv-logbox-text" class="sv-log"></pre>
       </div></div>`);
@@ -553,7 +574,7 @@
     $('#sv-logbox').on('click', (e) => { if (e.target.id === 'sv-logbox') $('#sv-logbox-close').trigger('click'); });
   }
   function fetchLogs(r) {
-    $('#sv-logbox-text').text('Lade Logs …');
+    $('#sv-logbox-text').text(t('Loading logs …'));
     post({ action: 'logs', task: r.taskId, tail: 500 })
       .done((res) => {
         const $p = $('#sv-logbox-text').text(res.log || res.error || '');
@@ -565,17 +586,17 @@
     ensureLogBox();
     logTask = r;
     $('#sv-logbox-title').text(`${r.name} @ ${r.node}`);
-    // Theme-Hintergrund übernehmen (hell/dunkel)
+    // use the theme background (light/dark)
     const bg = getComputedStyle(document.body).backgroundColor;
     if (bg && !/rgba\(0, 0, 0, 0\)|transparent/.test(bg)) $('#sv-logbox .sv-logbox-inner').css('background', bg);
     $('#sv-logbox').show();
     fetchLogs(r);
   }
 
-  /* ---------- Folder View: Pi-Container in die Container-Liste einschleusen ---------- */
+  /* ---------- Folder View: add remote containers to its container list ---------- */
   function hookFolderView() {
     let fe;
-    try { fe = folderEvents; } catch (e) { return; } // Folder View (2) nicht installiert
+    try { fe = folderEvents; } catch (e) { return; } // Folder View (2) not installed
     if (!fe || fe.__svHooked) return;
     fe.__svHooked = true;
     fe.addEventListener('docker-pre-folders-creation', (ev) => {
@@ -600,8 +621,8 @@
         }
         if (!order.includes(r.name)) order.push(r.name);
       }
-      // Anzeigenamen für Ordner: Regex oder Containerliste eines Ordners darf auch den Anzeigenamen meinen.
-      // Der echte Name wird dafür nur im Speicher (nicht gespeichert) in die Liste des Ordners aufgenommen.
+      // display names for folders: a folder's regex or container list may also mean the display name.
+      // For that the real name is added to the folder's list in memory only (never saved).
       const am = aliasMap();
       if (folders && am.size) {
         for (const f of Object.values(folders)) {

@@ -5,8 +5,9 @@ Markdown="false"
 Cond="is_file('/var/run/dockerd.pid')"
 ---
 <?php
-/* Swarm View – Swarm-Stacks als eigene Leiste auf der Docker-Seite (wie Compose Manager)
- * und Host-Spalte in Unraids Container-Tabelle (nur in der erweiterten Ansicht). */
+/* Swarm View – Swarm stacks as their own section on the Docker page (like Compose Manager)
+ * plus a host column in Unraid's container table (advanced view only). */
+require_once '/usr/local/emhttp/plugins/swarm-view/include/common.php';
 $sv_base = '/plugins/swarm-view';
 ?>
 <link type="text/css" rel="stylesheet" href="<?autov("$sv_base/css/swarm-view.css")?>">
@@ -28,10 +29,10 @@ $sv_base = '/plugins/swarm-view';
     <textarea id="sv-ed-env" class="sv-ed-text" spellcheck="false" autocapitalize="off" autocomplete="off" style="display:none"></textarea>
     <pre id="sv-ed-log" class="sv-log" style="display:none"></pre>
     <div class="sv-ed-buttons">
-      <input type="button" id="sv-ed-save" value="Speichern">
-      <input type="button" id="sv-ed-deploy" value="Speichern &amp; Stack Up">
-      <input type="button" id="sv-ed-close" value="Schließen">
-      <input type="button" id="sv-ed-delete" value="Stack-Dateien löschen" class="sv-right">
+      <input type="button" id="sv-ed-save" value="<?=sv_e('Save')?>">
+      <input type="button" id="sv-ed-deploy" value="<?=sv_e('Save & Stack Up')?>">
+      <input type="button" id="sv-ed-close" value="<?=sv_e('Close')?>">
+      <input type="button" id="sv-ed-delete" value="<?=sv_e('Delete stack files')?>" class="sv-right">
     </div>
   </div>
 
@@ -39,19 +40,20 @@ $sv_base = '/plugins/swarm-view';
     <thead><tr>
       <th style="text-align:left">Stack</th>
       <th class="sv-col-status">Status</th>
-      <th class="sv-col-where">Läuft auf</th>
-      <th class="sv-col-cmds">Befehle</th>
+      <th class="sv-col-where"><?=sv_e('Runs on')?></th>
+      <th class="sv-col-cmds"><?=sv_e('Commands')?></th>
       <th class="sv-adv sv-col-image">Image</th>
     </tr></thead>
-    <tbody><tr class="sv-empty"><td colspan="5">Lade …</td></tr></tbody>
+    <tbody><tr class="sv-empty"><td colspan="5"><?=sv_e('Loading …')?></td></tr></tbody>
   </table>
   <div class="sv-bottom">
     <input type="button" id="sv-add" value="Add New Swarm Stack">
-    <input type="button" id="sv-cleanup" value="Aufräumen" title="Gestoppte Swarm-Container und verwaiste Images auf allen Nodes löschen">
+    <input type="button" id="sv-cleanup" value="<?=sv_e('Cleanup')?>" title="<?=sv_e('Remove stopped Swarm containers and unused images on all nodes')?>">
     <span id="sv-history" class="sv-dim"></span>
   </div>
 </div>
 
+<?=sv_lang_script()?>
 <script src="<?autov("$sv_base/js/common.js")?>"></script>
 <script src="<?autov("$sv_base/js/stacks.js")?>"></script>
 <script src="<?autov("$sv_base/js/containers.js")?>"></script>

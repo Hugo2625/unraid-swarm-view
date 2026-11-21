@@ -1,9 +1,9 @@
 <?php
-/* Swarm View – Update-Hinweise: Digest im Service vs. Digest in der Registry */
+/* Swarm View – update hints: digest in the service vs. digest in the registry */
 require_once __DIR__ . '/common.php';
 
-// Unraids Docker-Klassen auf Dateiebene laden (sie legen globale Variablen an).
-// Diese Datei darf deshalb nur auf oberster Ebene eingebunden werden (Skripte, actions.php).
+// load Unraid's Docker classes at file level (they create global variables).
+// So this file may only be included at the top level (scripts, actions.php).
 if (!getenv('SV_FAKE_REGISTRY')) {
     $docroot ??= '/usr/local/emhttp';
     if (is_file("$docroot/plugins/dynamix.docker.manager/include/DockerClient.php")) {
@@ -18,15 +18,15 @@ function sv_image_parts(string $img): array {
         $digest = substr($img, $p + 1);
         $img = substr($img, 0, $p);
     }
-    // Tag ergänzen, wenn keiner angegeben ist (Port im Registry-Namen beachten)
+    // add a tag if none is given (mind a port in the registry name)
     $last = substr($img, (int)strrpos($img, '/'));
     if (strpos($last, ':') === false) $img .= ':latest';
     return [$img, $digest];
 }
 
-/** Aktueller Digest eines Tags in der Registry (über Unraids eigene Update-Prüfung) */
+/** Current digest of a tag in the registry (via Unraid's own update check) */
 function sv_remote_digest(string $ref): ?string {
-    // Test-Hook: feste Antworten aus einer JSON-Datei
+    // test hook: fixed answers from a JSON file
     if ($fake = getenv('SV_FAKE_REGISTRY')) {
         $map = json_decode((string)@file_get_contents($fake), true) ?: [];
         return $map[$ref] ?? null;
@@ -40,7 +40,7 @@ function sv_remote_digest(string $ref): ?string {
     }
 }
 
-/** Alle Services mit vollständiger Spec */
+/** All services with their full spec */
 function sv_services_inspect(): array {
     global $DOCKER;
     [$rc, $ids] = sv_run([$DOCKER, 'service', 'ls', '-q']);
@@ -52,7 +52,7 @@ function sv_services_inspect(): array {
 }
 
 /**
- * Prüft alle Swarm-Services auf neue Image-Versionen und speichert das Ergebnis.
+ * Checks all Swarm services for new image versions and stores the result.
  * @return array ['checked' => ts, 'services' => [name => [...]], 'errors' => [...]]
  */
 function sv_check_updates(): array {
@@ -63,13 +63,13 @@ function sv_check_updates(): array {
         $name = $s['Spec']['Name'] ?? '';
         if ($name === '' || !empty($s['Spec']['Labels']['swarm-view.agent']) || !empty($s['Spec']['Labels']['swarm-view.cleanup'])) continue;
         [$ref, $cur] = sv_image_parts($s['Spec']['TaskTemplate']['ContainerSpec']['Image'] ?? '');
-        if ($cur === '') {   // ohne Digest (z. B. lokal gebautes Image) nicht prüfbar
+        if ($cur === '') {   // without a digest (e.g. a locally built image) it cannot be checked
             $res['services'][$name] = ['ref' => $ref, 'current' => '', 'remote' => '', 'update' => false, 'note' => 'kein Digest (lokales Image?)'];
             continue;
         }
         if (!array_key_exists($ref, $cache)) $cache[$ref] = sv_remote_digest($ref);
         $remote = $cache[$ref];
-        if ($remote === null) $res['errors'][] = "$ref: Registry nicht erreichbar oder Image unbekannt";
+        if ($remote === null) $res['errors'][] = "$ref: " . sv_t('registry not reachable or image unknown');
         $res['services'][$name] = [
             'ref'     => $ref,
             'current' => $cur,
@@ -81,7 +81,7 @@ function sv_check_updates(): array {
     return $res;
 }
 
-/** Ergebnis der letzten Prüfung (für api.php) */
+/** Result of the last check (for api.php) */
 function sv_updates_cached(): array {
     return sv_state_read('updates');
 }
