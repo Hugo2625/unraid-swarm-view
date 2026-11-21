@@ -4,7 +4,7 @@
   <PluginURL>https://raw.githubusercontent.com/Hugo2652/unraid-swarm-view/main/swarm-view.plg</PluginURL>
   <PluginAuthor>Hugo2652</PluginAuthor>
   <Project>https://github.com/Hugo2652/unraid-swarm-view</Project>
-  <Support>https://github.com/Hugo2652/unraid-swarm-view/issues</Support>
+  <Support>https://forums.unraid.net/topic/201367-plugin-support-swarm-view-docker-swarm-stacks-on-the-docker-page/</Support>
   <Icon>https://raw.githubusercontent.com/Hugo2652/unraid-swarm-view/main/icon.png</Icon>
   <Category>Tools:Utilities</Category>
   <License>MIT</License>

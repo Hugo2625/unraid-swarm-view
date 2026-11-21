@@ -58,7 +58,8 @@ All texts in the code are English. Translations live in `src/swarm-view/lang/<co
 
 ## Support
 
-Issues and ideas: [GitHub issues](https://github.com/Hugo2652/unraid-swarm-view/issues).
+Questions and help: [support thread in the Unraid forum](https://forums.unraid.net/topic/201367-plugin-support-swarm-view-docker-swarm-stacks-on-the-docker-page/).  
+Bugs and ideas: [GitHub issues](https://github.com/Hugo2652/unraid-swarm-view/issues).
 
 ## License
 

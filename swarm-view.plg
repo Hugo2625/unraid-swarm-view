@@ -2,15 +2,17 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "swarm-view">
 <!ENTITY author    "Hugo2652">
-<!ENTITY version   "2026.11.21a">
+<!ENTITY version   "2026.11.21b">
 <!ENTITY github    "Hugo2652/unraid-swarm-view">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/&github;/main/&name;.plg">
-<!ENTITY support   "">
+<!ENTITY support   "https://forums.unraid.net/topic/201367-plugin-support-swarm-view-docker-swarm-stacks-on-the-docker-page/">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
 ]>
-<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" min="7.0.0" icon="cubes">
+<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" support="&support;" min="7.0.0" icon="cubes">
 
 <CHANGES>
+###2026.11.21b
+- Support link to the Unraid forum thread
 ###2026.11.21a
 - English interface; German stays available. The language follows Unraid's display language or can be chosen in the settings (General → Display → Language)
 - Notifications, messages and the settings page are translated as well

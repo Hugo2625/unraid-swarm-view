@@ -12,7 +12,7 @@ SRC = ROOT / 'src' / 'swarm-view'
 OUT = ROOT / 'swarm-view.plg'
 GITHUB = 'Hugo2652/unraid-swarm-view'
 BRANCH = 'main'
-SUPPORT = ''   # forum support thread URL – set once the thread exists
+SUPPORT = 'https://forums.unraid.net/topic/201367-plugin-support-swarm-view-docker-swarm-stacks-on-the-docker-page/'
 
 if len(sys.argv) != 2 or not re.fullmatch(r'\d{4}\.\d{2}\.\d{2}[a-z]?', sys.argv[1]):
     sys.exit('usage: build_plg.py <version YYYY.MM.DD[letter]>')

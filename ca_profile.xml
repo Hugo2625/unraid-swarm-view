@@ -3,5 +3,5 @@
   <Profile>Swarm View brings Docker Swarm to the Unraid Docker page: manage stacks, see which node every container runs on, and keep services running when a node goes away. Built for Unraid as swarm manager with small worker nodes such as a Raspberry Pi.</Profile>
   <Icon>https://raw.githubusercontent.com/Hugo2652/unraid-swarm-view/main/icon.png</Icon>
   <WebPage>https://github.com/Hugo2652/unraid-swarm-view</WebPage>
-  <!-- <Forum>https://forums.unraid.net/topic/XXXXX-plugin-swarm-view/</Forum> -->
+  <Forum>https://forums.unraid.net/topic/201367-plugin-support-swarm-view-docker-swarm-stacks-on-the-docker-page/</Forum>
 </CommunityApplications>
