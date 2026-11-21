@@ -18,6 +18,8 @@ The interface is available in **English** and **German**. It follows Unraid's di
 - **Cleanup** of stopped task containers and unused images on all nodes, on demand or scheduled.
 - **Settings** with tabs: general, nodes (with warnings such as missing memory cgroup or Docker version mismatch), watchdog, maintenance, status.
 
+![Docker page: local containers, Swarm containers on Unraid and on the Pi, Swarm section below](docs/docker-page.png)
+
 ![Node settings](docs/settings-nodes.png)
 
 ## Requirements
