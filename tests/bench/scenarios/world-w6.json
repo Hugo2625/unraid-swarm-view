@@ -1,0 +1,1571 @@
+{
+ "api": {
+  "ok": true,
+  "host": "Unraid",
+  "swarm": {
+   "state": "active",
+   "manager": true,
+   "nodeId": "n1unraid0000000000000000a",
+   "historyLimit": 1,
+   "active": true
+  },
+  "nodes": [
+   {
+    "id": "n1unraid0000000000000000a",
+    "hostname": "Unraid",
+    "self": true,
+    "role": "manager",
+    "availability": "active",
+    "state": "ready",
+    "addr": "192.168.1.10",
+    "leader": true,
+    "arch": "x86_64",
+    "cpus": 12,
+    "memGB": 31.2,
+    "engine": "27.5.1",
+    "labels": {}
+   },
+   {
+    "id": "n2raspberrypi000000000000",
+    "hostname": "raspberrypi",
+    "self": false,
+    "role": "worker",
+    "availability": "active",
+    "state": "ready",
+    "addr": "192.168.1.11",
+    "leader": false,
+    "arch": "aarch64",
+    "cpus": 4,
+    "memGB": 3.7,
+    "engine": "27.5.1",
+    "labels": {}
+   },
+   {
+    "id": "n3nuc00000000000000000000",
+    "hostname": "nuc",
+    "self": false,
+    "role": "worker",
+    "availability": "active",
+    "state": "ready",
+    "addr": "192.168.1.12",
+    "leader": false,
+    "arch": "x86_64",
+    "cpus": 8,
+    "memGB": 15.5,
+    "engine": "27.5.1",
+    "labels": {}
+   },
+   {
+    "id": "n4pi500000000000000000000",
+    "hostname": "pi5",
+    "self": false,
+    "role": "worker",
+    "availability": "active",
+    "state": "ready",
+    "addr": "192.168.1.13",
+    "leader": false,
+    "arch": "aarch64",
+    "cpus": 4,
+    "memGB": 7.8,
+    "engine": "27.5.1",
+    "labels": {}
+   },
+   {
+    "id": "n5zimaboard00000000000000",
+    "hostname": "zimaboard",
+    "self": false,
+    "role": "worker",
+    "availability": "active",
+    "state": "ready",
+    "addr": "192.168.1.14",
+    "leader": false,
+    "arch": "x86_64",
+    "cpus": 4,
+    "memGB": 7.6,
+    "engine": "27.5.1",
+    "labels": {}
+   },
+   {
+    "id": "n6pi4garage00000000000000",
+    "hostname": "pi4-garage",
+    "self": false,
+    "role": "worker",
+    "availability": "active",
+    "state": "ready",
+    "addr": "192.168.1.15",
+    "leader": false,
+    "arch": "aarch64",
+    "cpus": 4,
+    "memGB": 1.8,
+    "engine": "27.5.1",
+    "labels": {}
+   },
+   {
+    "id": "n7minipc00000000000000000",
+    "hostname": "mini-pc",
+    "self": false,
+    "role": "worker",
+    "availability": "active",
+    "state": "ready",
+    "addr": "192.168.1.16",
+    "leader": false,
+    "arch": "x86_64",
+    "cpus": 16,
+    "memGB": 31.1,
+    "engine": "27.5.1",
+    "labels": {}
+   }
+  ],
+  "stacks": [
+   {
+    "name": "paperless",
+    "services": [
+     {
+      "id": "paperless_paperless-ngx",
+      "name": "paperless_paperless-ngx",
+      "short": "paperless-ngx",
+      "stack": "paperless",
+      "image": "ghcr.io/paperless-ngx/paperless-ngx:latest",
+      "localImage": false,
+      "mode": "replicated",
+      "replicas": "1/1",
+      "desired": 1,
+      "ports": "8000\u21928000/tcp",
+      "constraints": [],
+      "platforms": [
+       "amd64",
+       "arm64"
+      ],
+      "labels": {
+       "net.unraid.docker.icon": "data:image/svg+xml;utf8,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 48 48%27%3E%3Crect width=%2748%27 height=%2748%27 rx=%2710%27 fill=%27%237b3f98%27/%3E%3Ctext x=%2724%27 y=%2732%27 font-family=%27Arial%27 font-size=%2724%27 font-weight=%27bold%27 fill=%27%23fff%27 text-anchor=%27middle%27%3EP%3C/text%3E%3C/svg%3E"
+      },
+      "prefer": "",
+      "alias": "Paperless",
+      "canRollback": false,
+      "rollbackTo": "",
+      "internal": false,
+      "mounts": [
+       {
+        "type": "bind",
+        "target": "/config",
+        "source": "/mnt/user/appdata/paperless-ngx",
+        "ro": false
+       }
+      ],
+      "portList": [
+       {
+        "target": 8000,
+        "published": 8000,
+        "proto": "tcp"
+       }
+      ],
+      "tasks": [
+       {
+        "id": "64a315e859425dbfce14f0bb4",
+        "slot": "1",
+        "node": "nuc",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
+        "containerId": "5a2b76e657d4",
+        "networks": [
+         {
+          "name": "paperless_default",
+          "addr": "10.0.9.24"
+         }
+        ]
+       }
+      ],
+      "placeNode": "",
+      "rebalancing": false,
+      "update": {
+       "remote": "x"
+      }
+     },
+     {
+      "id": "paperless_broker",
+      "name": "paperless_broker",
+      "short": "broker",
+      "stack": "paperless",
+      "image": "redis:7",
+      "localImage": false,
+      "mode": "replicated",
+      "replicas": "1/1",
+      "desired": 1,
+      "ports": "",
+      "constraints": [],
+      "platforms": [
+       "amd64",
+       "arm64"
+      ],
+      "labels": {
+       "net.unraid.docker.icon": "data:image/svg+xml;utf8,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 48 48%27%3E%3Crect width=%2748%27 height=%2748%27 rx=%2710%27 fill=%27%23f46800%27/%3E%3Ctext x=%2724%27 y=%2732%27 font-family=%27Arial%27 font-size=%2724%27 font-weight=%27bold%27 fill=%27%23fff%27 text-anchor=%27middle%27%3EB%3C/text%3E%3C/svg%3E"
+      },
+      "prefer": "",
+      "alias": "",
+      "canRollback": false,
+      "rollbackTo": "",
+      "internal": false,
+      "mounts": [],
+      "portList": [],
+      "tasks": [
+       {
+        "id": "bc81ae511f239f28c2f9ac280",
+        "slot": "1",
+        "node": "pi4-garage",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
+        "containerId": "981fa6440011",
+        "networks": [
+         {
+          "name": "paperless_default",
+          "addr": "10.0.9.17"
+         }
+        ]
+       }
+      ],
+      "placeNode": "",
+      "rebalancing": false,
+      "update": null
+     },
+     {
+      "id": "paperless_gotenberg",
+      "name": "paperless_gotenberg",
+      "short": "gotenberg",
+      "stack": "paperless",
+      "image": "gotenberg/gotenberg:8",
+      "localImage": false,
+      "mode": "replicated",
+      "replicas": "1/1",
+      "desired": 1,
+      "ports": "",
+      "constraints": [],
+      "platforms": [
+       "amd64",
+       "arm64"
+      ],
+      "labels": {
+       "net.unraid.docker.icon": "data:image/svg+xml;utf8,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 48 48%27%3E%3Crect width=%2748%27 height=%2748%27 rx=%2710%27 fill=%27%2318bcf2%27/%3E%3Ctext x=%2724%27 y=%2732%27 font-family=%27Arial%27 font-size=%2724%27 font-weight=%27bold%27 fill=%27%23fff%27 text-anchor=%27middle%27%3EG%3C/text%3E%3C/svg%3E"
+      },
+      "prefer": "",
+      "alias": "",
+      "canRollback": false,
+      "rollbackTo": "",
+      "internal": false,
+      "mounts": [],
+      "portList": [],
+      "tasks": [
+       {
+        "id": "4aa3241bbea0b6eb0288dbc91",
+        "slot": "1",
+        "node": "zimaboard",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
+        "containerId": "7f032cac9a1d",
+        "networks": [
+         {
+          "name": "paperless_default",
+          "addr": "10.0.9.20"
+         }
+        ]
+       }
+      ],
+      "placeNode": "",
+      "rebalancing": false,
+      "update": null
+     }
+    ]
+   },
+   {
+    "name": "smarthome",
+    "services": [
+     {
+      "id": "smarthome_homeassistant",
+      "name": "smarthome_homeassistant",
+      "short": "homeassistant",
+      "stack": "smarthome",
+      "image": "ghcr.io/home-assistant/home-assistant:stable",
+      "localImage": false,
+      "mode": "replicated",
+      "replicas": "1/1",
+      "desired": 1,
+      "ports": "8123\u21928123/tcp",
+      "constraints": [
+       "node.role == manager"
+      ],
+      "platforms": [
+       "amd64",
+       "arm64"
+      ],
+      "labels": {
+       "net.unraid.docker.icon": "data:image/svg+xml;utf8,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 48 48%27%3E%3Crect width=%2748%27 height=%2748%27 rx=%2710%27 fill=%27%239b2aff%27/%3E%3Ctext x=%2724%27 y=%2732%27 font-family=%27Arial%27 font-size=%2724%27 font-weight=%27bold%27 fill=%27%23fff%27 text-anchor=%27middle%27%3EH%3C/text%3E%3C/svg%3E"
+      },
+      "prefer": "",
+      "alias": "HomeAssistant",
+      "canRollback": false,
+      "rollbackTo": "",
+      "internal": false,
+      "mounts": [
+       {
+        "type": "bind",
+        "target": "/config",
+        "source": "/mnt/user/appdata/homeassistant",
+        "ro": false
+       }
+      ],
+      "portList": [
+       {
+        "target": 8123,
+        "published": 8123,
+        "proto": "tcp"
+       }
+      ],
+      "tasks": [
+       {
+        "id": "1f345e16a8d4742f73ef1ce4d",
+        "slot": "1",
+        "node": "Unraid",
+        "local": true,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
+        "containerId": "ee109d54c23a",
+        "networks": [
+         {
+          "name": "smarthome_default",
+          "addr": "10.0.9.24"
+         }
+        ]
+       }
+      ],
+      "placeNode": "",
+      "rebalancing": false,
+      "update": {
+       "remote": "x"
+      }
+     },
+     {
+      "id": "smarthome_mosquitto",
+      "name": "smarthome_mosquitto",
+      "short": "mosquitto",
+      "stack": "smarthome",
+      "image": "eclipse-mosquitto:2",
+      "localImage": false,
+      "mode": "replicated",
+      "replicas": "1/1",
+      "desired": 1,
+      "ports": "1883\u21921883/tcp, 9001\u21929001/tcp",
+      "constraints": [],
+      "platforms": [
+       "amd64",
+       "arm64"
+      ],
+      "labels": {
+       "net.unraid.docker.icon": "data:image/svg+xml;utf8,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 48 48%27%3E%3Crect width=%2748%27 height=%2748%27 rx=%2710%27 fill=%27%2318bcf2%27/%3E%3Ctext x=%2724%27 y=%2732%27 font-family=%27Arial%27 font-size=%2724%27 font-weight=%27bold%27 fill=%27%23fff%27 text-anchor=%27middle%27%3EM%3C/text%3E%3C/svg%3E"
+      },
+      "prefer": "",
+      "alias": "",
+      "canRollback": false,
+      "rollbackTo": "",
+      "internal": false,
+      "mounts": [
+       {
+        "type": "bind",
+        "target": "/config",
+        "source": "/mnt/user/appdata/mosquitto",
+        "ro": false
+       }
+      ],
+      "portList": [
+       {
+        "target": 1883,
+        "published": 1883,
+        "proto": "tcp"
+       },
+       {
+        "target": 9001,
+        "published": 9001,
+        "proto": "tcp"
+       }
+      ],
+      "tasks": [
+       {
+        "id": "305db77aa741d1fe27a6ae487",
+        "slot": "1",
+        "node": "raspberrypi",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
+        "containerId": "b17fc65a44db",
+        "networks": [
+         {
+          "name": "smarthome_default",
+          "addr": "10.0.9.20"
+         }
+        ]
+       }
+      ],
+      "placeNode": "",
+      "rebalancing": false,
+      "update": null
+     },
+     {
+      "id": "smarthome_zigbee2mqtt",
+      "name": "smarthome_zigbee2mqtt",
+      "short": "zigbee2mqtt",
+      "stack": "smarthome",
+      "image": "koenkk/zigbee2mqtt:latest",
+      "localImage": false,
+      "mode": "replicated",
+      "replicas": "1/1",
+      "desired": 1,
+      "ports": "8080\u21928080/tcp",
+      "constraints": [],
+      "platforms": [
+       "amd64",
+       "arm64"
+      ],
+      "labels": {
+       "net.unraid.docker.icon": "data:image/svg+xml;utf8,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 48 48%27%3E%3Crect width=%2748%27 height=%2748%27 rx=%2710%27 fill=%27%232f9e44%27/%3E%3Ctext x=%2724%27 y=%2732%27 font-family=%27Arial%27 font-size=%2724%27 font-weight=%27bold%27 fill=%27%23fff%27 text-anchor=%27middle%27%3EZ%3C/text%3E%3C/svg%3E"
+      },
+      "prefer": "",
+      "alias": "Zigbee2MQTT",
+      "canRollback": false,
+      "rollbackTo": "",
+      "internal": false,
+      "mounts": [
+       {
+        "type": "bind",
+        "target": "/config",
+        "source": "/mnt/user/appdata/zigbee2mqtt",
+        "ro": false
+       }
+      ],
+      "portList": [
+       {
+        "target": 8080,
+        "published": 8080,
+        "proto": "tcp"
+       }
+      ],
+      "tasks": [
+       {
+        "id": "220f3381ec306b716488ee43d",
+        "slot": "1",
+        "node": "raspberrypi",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
+        "containerId": "33758a67b2da",
+        "networks": [
+         {
+          "name": "smarthome_default",
+          "addr": "10.0.9.22"
+         }
+        ]
+       }
+      ],
+      "placeNode": "",
+      "rebalancing": false,
+      "update": null
+     },
+     {
+      "id": "smarthome_node-red",
+      "name": "smarthome_node-red",
+      "short": "node-red",
+      "stack": "smarthome",
+      "image": "nodered/node-red:latest",
+      "localImage": false,
+      "mode": "replicated",
+      "replicas": "1/1",
+      "desired": 1,
+      "ports": "1880\u21921880/tcp",
+      "constraints": [],
+      "platforms": [
+       "amd64",
+       "arm64"
+      ],
+      "labels": {
+       "net.unraid.docker.icon": "data:image/svg+xml;utf8,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 48 48%27%3E%3Crect width=%2748%27 height=%2748%27 rx=%2710%27 fill=%27%239b2aff%27/%3E%3Ctext x=%2724%27 y=%2732%27 font-family=%27Arial%27 font-size=%2724%27 font-weight=%27bold%27 fill=%27%23fff%27 text-anchor=%27middle%27%3EN%3C/text%3E%3C/svg%3E",
+       "swarm-view.prefer": "raspberrypi"
+      },
+      "prefer": "raspberrypi",
+      "alias": "",
+      "canRollback": false,
+      "rollbackTo": "",
+      "internal": false,
+      "mounts": [
+       {
+        "type": "bind",
+        "target": "/config",
+        "source": "/mnt/user/appdata/node-red",
+        "ro": false
+       }
+      ],
+      "portList": [
+       {
+        "target": 1880,
+        "published": 1880,
+        "proto": "tcp"
+       }
+      ],
+      "tasks": [
+       {
+        "id": "a6c30bee550e49d83e8c45c1a",
+        "slot": "1",
+        "node": "pi5",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
+        "containerId": "c3198364559a",
+        "networks": [
+         {
+          "name": "smarthome_default",
+          "addr": "10.0.9.19"
+         }
+        ]
+       }
+      ],
+      "placeNode": "",
+      "rebalancing": false,
+      "update": null
+     },
+     {
+      "id": "smarthome_esphome",
+      "name": "smarthome_esphome",
+      "short": "esphome",
+      "stack": "smarthome",
+      "image": "ghcr.io/esphome/esphome:stable",
+      "localImage": false,
+      "mode": "replicated",
+      "replicas": "1/1",
+      "desired": 1,
+      "ports": "",
+      "constraints": [
+       "node.hostname == Unraid"
+      ],
+      "platforms": [
+       "amd64",
+       "arm64"
+      ],
+      "labels": {
+       "net.unraid.docker.icon": "data:image/svg+xml;utf8,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 48 48%27%3E%3Crect width=%2748%27 height=%2748%27 rx=%2710%27 fill=%27%239b2aff%27/%3E%3Ctext x=%2724%27 y=%2732%27 font-family=%27Arial%27 font-size=%2724%27 font-weight=%27bold%27 fill=%27%23fff%27 text-anchor=%27middle%27%3EE%3C/text%3E%3C/svg%3E"
+      },
+      "prefer": "",
+      "alias": "ESPHome",
+      "canRollback": false,
+      "rollbackTo": "",
+      "internal": false,
+      "mounts": [
+       {
+        "type": "bind",
+        "target": "/config",
+        "source": "/mnt/user/appdata/esphome",
+        "ro": false
+       }
+      ],
+      "portList": [],
+      "tasks": [
+       {
+        "id": "654d830aa1e4b13c1d23be9ad",
+        "slot": "1",
+        "node": "Unraid",
+        "local": true,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
+        "containerId": "2229822d4b5b",
+        "networks": [
+         {
+          "name": "smarthome_default",
+          "addr": "10.0.9.18"
+         }
+        ]
+       }
+      ],
+      "placeNode": "",
+      "rebalancing": false,
+      "update": null
+     },
+     {
+      "id": "smarthome_whoami",
+      "name": "smarthome_whoami",
+      "short": "whoami",
+      "stack": "smarthome",
+      "image": "traefik/whoami:latest",
+      "localImage": false,
+      "mode": "replicated",
+      "replicas": "7/7",
+      "desired": 7,
+      "ports": "8088\u21928088/tcp",
+      "constraints": [],
+      "platforms": [
+       "amd64",
+       "arm64"
+      ],
+      "labels": {
+       "net.unraid.docker.icon": "data:image/svg+xml;utf8,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 48 48%27%3E%3Crect width=%2748%27 height=%2748%27 rx=%2710%27 fill=%27%239b2aff%27/%3E%3Ctext x=%2724%27 y=%2732%27 font-family=%27Arial%27 font-size=%2724%27 font-weight=%27bold%27 fill=%27%23fff%27 text-anchor=%27middle%27%3EW%3C/text%3E%3C/svg%3E"
+      },
+      "prefer": "",
+      "alias": "whoami",
+      "canRollback": false,
+      "rollbackTo": "",
+      "internal": false,
+      "mounts": [
+       {
+        "type": "bind",
+        "target": "/config",
+        "source": "/mnt/user/appdata/whoami",
+        "ro": false
+       }
+      ],
+      "portList": [
+       {
+        "target": 8088,
+        "published": 8088,
+        "proto": "tcp"
+       }
+      ],
+      "tasks": [
+       {
+        "id": "a28669580bb7db9b73f4d9763",
+        "slot": "1",
+        "node": "Unraid",
+        "local": true,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
+        "containerId": "cd0d658d466c",
+        "networks": [
+         {
+          "name": "smarthome_default",
+          "addr": "10.0.9.17"
+         }
+        ]
+       },
+       {
+        "id": "366773bfb5f0ba56f377a191e",
+        "slot": "2",
+        "node": "raspberrypi",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T13:04:52Z",
+        "since": "2026-11-21T12:04:52Z",
+        "containerId": "fa7e9c9ed768",
+        "networks": [
+         {
+          "name": "smarthome_default",
+          "addr": "10.0.9.18"
+         }
+        ]
+       },
+       {
+        "id": "93f29d556c36cc16f046ad2f1",
+        "slot": "3",
+        "node": "nuc",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T12:04:52Z",
+        "since": "2026-11-21T11:04:52Z",
+        "containerId": "0313b2632efc",
+        "networks": [
+         {
+          "name": "smarthome_default",
+          "addr": "10.0.9.19"
+         }
+        ]
+       },
+       {
+        "id": "86fddb416ef8962c20ff8eb58",
+        "slot": "4",
+        "node": "pi5",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T11:04:52Z",
+        "since": "2026-11-21T10:04:52Z",
+        "containerId": "f647e8a45c60",
+        "networks": [
+         {
+          "name": "smarthome_default",
+          "addr": "10.0.9.20"
+         }
+        ]
+       },
+       {
+        "id": "3be87b70955d522425a95f7d4",
+        "slot": "5",
+        "node": "zimaboard",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T10:04:52Z",
+        "since": "2026-11-21T09:04:52Z",
+        "containerId": "3b983192155b",
+        "networks": [
+         {
+          "name": "smarthome_default",
+          "addr": "10.0.9.21"
+         }
+        ]
+       },
+       {
+        "id": "c92b2e6d6dd206e37d87e3593",
+        "slot": "6",
+        "node": "pi4-garage",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T09:04:52Z",
+        "since": "2026-11-21T08:04:52Z",
+        "containerId": "8a0184c2d5a9",
+        "networks": [
+         {
+          "name": "smarthome_default",
+          "addr": "10.0.9.22"
+         }
+        ]
+       },
+       {
+        "id": "8e92a7db822bd5ddbf5c288ec",
+        "slot": "7",
+        "node": "mini-pc",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T08:04:52Z",
+        "since": "2026-11-21T07:04:52Z",
+        "containerId": "fa299a44cd3d",
+        "networks": [
+         {
+          "name": "smarthome_default",
+          "addr": "10.0.9.23"
+         }
+        ]
+       }
+      ],
+      "placeNode": "",
+      "rebalancing": false,
+      "update": null
+     }
+    ]
+   },
+   {
+    "name": "tools",
+    "services": [
+     {
+      "id": "tools_uptime-kuma",
+      "name": "tools_uptime-kuma",
+      "short": "uptime-kuma",
+      "stack": "tools",
+      "image": "louislam/uptime-kuma:1",
+      "localImage": false,
+      "mode": "replicated",
+      "replicas": "1/1",
+      "desired": 1,
+      "ports": "3001\u21923001/tcp",
+      "constraints": [],
+      "platforms": [
+       "amd64",
+       "arm64"
+      ],
+      "labels": {
+       "net.unraid.docker.icon": "data:image/svg+xml;utf8,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 48 48%27%3E%3Crect width=%2748%27 height=%2748%27 rx=%2710%27 fill=%27%230082c9%27/%3E%3Ctext x=%2724%27 y=%2732%27 font-family=%27Arial%27 font-size=%2724%27 font-weight=%27bold%27 fill=%27%23fff%27 text-anchor=%27middle%27%3EU%3C/text%3E%3C/svg%3E"
+      },
+      "prefer": "",
+      "alias": "Uptime Kuma",
+      "canRollback": false,
+      "rollbackTo": "",
+      "internal": false,
+      "mounts": [
+       {
+        "type": "bind",
+        "target": "/config",
+        "source": "/mnt/user/appdata/uptime-kuma",
+        "ro": false
+       }
+      ],
+      "portList": [
+       {
+        "target": 3001,
+        "published": 3001,
+        "proto": "tcp"
+       }
+      ],
+      "tasks": [
+       {
+        "id": "4695539618020e3ac0a824577",
+        "slot": "1",
+        "node": "mini-pc",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
+        "containerId": "f3bc738a4fa7",
+        "networks": [
+         {
+          "name": "tools_default",
+          "addr": "10.0.5.22"
+         }
+        ]
+       }
+      ],
+      "placeNode": "",
+      "rebalancing": false,
+      "update": null
+     },
+     {
+      "id": "tools_it-tools",
+      "name": "tools_it-tools",
+      "short": "it-tools",
+      "stack": "tools",
+      "image": "corentinth/it-tools:latest",
+      "localImage": false,
+      "mode": "replicated",
+      "replicas": "3/3",
+      "desired": 3,
+      "ports": "8085\u21928085/tcp",
+      "constraints": [],
+      "platforms": [
+       "amd64",
+       "arm64"
+      ],
+      "labels": {
+       "net.unraid.docker.icon": "data:image/svg+xml;utf8,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 48 48%27%3E%3Crect width=%2748%27 height=%2748%27 rx=%2710%27 fill=%27%23c0765a%27/%3E%3Ctext x=%2724%27 y=%2732%27 font-family=%27Arial%27 font-size=%2724%27 font-weight=%27bold%27 fill=%27%23fff%27 text-anchor=%27middle%27%3EI%3C/text%3E%3C/svg%3E"
+      },
+      "prefer": "",
+      "alias": "",
+      "canRollback": false,
+      "rollbackTo": "",
+      "internal": false,
+      "mounts": [
+       {
+        "type": "bind",
+        "target": "/config",
+        "source": "/mnt/user/appdata/it-tools",
+        "ro": false
+       }
+      ],
+      "portList": [
+       {
+        "target": 8085,
+        "published": 8085,
+        "proto": "tcp"
+       }
+      ],
+      "tasks": [
+       {
+        "id": "561b83a12ee95bee79c615024",
+        "slot": "1",
+        "node": "zimaboard",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
+        "containerId": "b004680edd6a",
+        "networks": [
+         {
+          "name": "tools_default",
+          "addr": "10.0.5.19"
+         }
+        ]
+       },
+       {
+        "id": "6693a8363ce5ef60f89e6ef57",
+        "slot": "2",
+        "node": "pi4-garage",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T13:04:52Z",
+        "since": "2026-11-21T12:04:52Z",
+        "containerId": "01ab7a22d560",
+        "networks": [
+         {
+          "name": "tools_default",
+          "addr": "10.0.5.20"
+         }
+        ]
+       },
+       {
+        "id": "7f2b145d90bb5fb38295d6300",
+        "slot": "3",
+        "node": "mini-pc",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T12:04:52Z",
+        "since": "2026-11-21T11:04:52Z",
+        "containerId": "38816269c80b",
+        "networks": [
+         {
+          "name": "tools_default",
+          "addr": "10.0.5.21"
+         }
+        ]
+       }
+      ],
+      "placeNode": "",
+      "rebalancing": false,
+      "update": null
+     }
+    ]
+   },
+   {
+    "name": "monitoring",
+    "services": [
+     {
+      "id": "monitoring_node-exporter",
+      "name": "monitoring_node-exporter",
+      "short": "node-exporter",
+      "stack": "monitoring",
+      "image": "prom/node-exporter:latest",
+      "localImage": false,
+      "mode": "global",
+      "replicas": "7/7",
+      "desired": null,
+      "ports": "",
+      "constraints": [],
+      "platforms": [
+       "amd64",
+       "arm64"
+      ],
+      "labels": {
+       "net.unraid.docker.icon": "data:image/svg+xml;utf8,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 48 48%27%3E%3Crect width=%2748%27 height=%2748%27 rx=%2710%27 fill=%27%23175ddc%27/%3E%3Ctext x=%2724%27 y=%2732%27 font-family=%27Arial%27 font-size=%2724%27 font-weight=%27bold%27 fill=%27%23fff%27 text-anchor=%27middle%27%3EN%3C/text%3E%3C/svg%3E"
+      },
+      "prefer": "",
+      "alias": "",
+      "canRollback": false,
+      "rollbackTo": "",
+      "internal": false,
+      "mounts": [],
+      "portList": [],
+      "tasks": [
+       {
+        "id": "cba48c7d395528c570a7daa1f",
+        "slot": "n1unraid0000000000000000a",
+        "node": "Unraid",
+        "local": true,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
+        "containerId": "2363cf880b17",
+        "networks": [
+         {
+          "name": "monitoring_default",
+          "addr": "10.0.10.24"
+         }
+        ]
+       },
+       {
+        "id": "6c3b91ee9f94b7f18edab7794",
+        "slot": "n2raspberrypi000000000000",
+        "node": "raspberrypi",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T13:04:52Z",
+        "since": "2026-11-21T12:04:52Z",
+        "containerId": "10d7c16b2f37",
+        "networks": [
+         {
+          "name": "monitoring_default",
+          "addr": "10.0.10.25"
+         }
+        ]
+       },
+       {
+        "id": "9991bc80db377e792eb61a207",
+        "slot": "n3nuc00000000000000000000",
+        "node": "nuc",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T12:04:52Z",
+        "since": "2026-11-21T11:04:52Z",
+        "containerId": "325121e01b89",
+        "networks": [
+         {
+          "name": "monitoring_default",
+          "addr": "10.0.10.26"
+         }
+        ]
+       },
+       {
+        "id": "45c339d8f6c7cf74ec17e6896",
+        "slot": "n4pi500000000000000000000",
+        "node": "pi5",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T11:04:52Z",
+        "since": "2026-11-21T10:04:52Z",
+        "containerId": "3c1a2f7a94c7",
+        "networks": [
+         {
+          "name": "monitoring_default",
+          "addr": "10.0.10.27"
+         }
+        ]
+       },
+       {
+        "id": "c00ed15acddf98ca6795e435f",
+        "slot": "n5zimaboard00000000000000",
+        "node": "zimaboard",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T10:04:52Z",
+        "since": "2026-11-21T09:04:52Z",
+        "containerId": "6c86c9ad07f7",
+        "networks": [
+         {
+          "name": "monitoring_default",
+          "addr": "10.0.10.28"
+         }
+        ]
+       },
+       {
+        "id": "359944ea08833852a6cd9b2c4",
+        "slot": "n6pi4garage00000000000000",
+        "node": "pi4-garage",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T09:04:52Z",
+        "since": "2026-11-21T08:04:52Z",
+        "containerId": "6cf90f2cded6",
+        "networks": [
+         {
+          "name": "monitoring_default",
+          "addr": "10.0.10.29"
+         }
+        ]
+       },
+       {
+        "id": "4ecda3b17f5d7d17e86579a48",
+        "slot": "n7minipc00000000000000000",
+        "node": "mini-pc",
+        "local": false,
+        "current": "Running 3 hours ago",
+        "error": "",
+        "created": "2026-11-19T08:04:52Z",
+        "since": "2026-11-21T07:04:52Z",
+        "containerId": "6b36a162585e",
+        "networks": [
+         {
+          "name": "monitoring_default",
+          "addr": "10.0.10.30"
+         }
+        ]
+       }
+      ],
+      "placeNode": "",
+      "rebalancing": false,
+      "update": null
+     }
+    ]
+   }
+  ],
+  "containers": {
+   "smarthome_homeassistant.1.1f345e16a8d4742f73ef1ce4d": {
+    "swarmStack": "smarthome",
+    "swarmService": "smarthome_homeassistant",
+    "compose": ""
+   },
+   "smarthome_esphome.1.654d830aa1e4b13c1d23be9ad": {
+    "swarmStack": "smarthome",
+    "swarmService": "smarthome_esphome",
+    "compose": ""
+   },
+   "smarthome_whoami.1.a28669580bb7db9b73f4d9763": {
+    "swarmStack": "smarthome",
+    "swarmService": "smarthome_whoami",
+    "compose": ""
+   },
+   "monitoring_node-exporter.n1unraid0000000000000000a.cba48c7d395528c570a7daa1f": {
+    "swarmStack": "monitoring",
+    "swarmService": "monitoring_node-exporter",
+    "compose": ""
+   }
+  },
+  "managed": [
+   "paperless",
+   "smarthome",
+   "testing",
+   "monitoring",
+   "tools"
+  ],
+  "stackInfo": {
+   "paperless": {
+    "path": "/boot/config/plugins/swarm-view/stacks/paperless",
+    "description": "Documents"
+   },
+   "smarthome": {
+    "path": "/boot/config/plugins/swarm-view/stacks/smarthome",
+    "description": "Home automation"
+   },
+   "testing": {
+    "path": "/boot/config/plugins/swarm-view/stacks/testing",
+    "description": ""
+   },
+   "monitoring": {
+    "path": "/boot/config/plugins/swarm-view/stacks/monitoring",
+    "description": "Metrics on every node"
+   },
+   "tools": {
+    "path": "/boot/config/plugins/swarm-view/stacks/tools",
+    "description": "Small tools"
+   }
+  },
+  "stats": {
+   "enabled": true,
+   "nodes": {
+    "Unraid": {
+     "cpu": 18.4,
+     "mem": 41,
+     "stale": false,
+     "ncpu": 12,
+     "ts": 1795280692
+    },
+    "raspberrypi": {
+     "cpu": 37.9,
+     "mem": 78,
+     "stale": false,
+     "ncpu": 4,
+     "ts": 1795280692
+    },
+    "nuc": {
+     "cpu": 12.3,
+     "mem": 35,
+     "stale": false,
+     "ncpu": 8,
+     "ts": 1795280692
+    },
+    "pi5": {
+     "cpu": 55.0,
+     "mem": 61,
+     "stale": false,
+     "ncpu": 4,
+     "ts": 1795280692
+    },
+    "zimaboard": {
+     "cpu": 8.4,
+     "mem": 44,
+     "stale": false,
+     "ncpu": 4,
+     "ts": 1795280692
+    },
+    "pi4-garage": {
+     "cpu": 71.2,
+     "mem": 89,
+     "stale": false,
+     "ncpu": 4,
+     "ts": 1795280692
+    },
+    "mini-pc": {
+     "cpu": 22.0,
+     "mem": 17,
+     "stale": false,
+     "ncpu": 16,
+     "ts": 1795280692
+    }
+   },
+   "tasks": {
+    "64a315e859425dbfce14f0bb4": {
+     "cpu": "4.50%",
+     "mem": "80MiB / 15.5GiB",
+     "memPerc": "2.1%",
+     "node": "nuc",
+     "ncpu": 8,
+     "memTotal": 16642998272
+    },
+    "bc81ae511f239f28c2f9ac280": {
+     "cpu": "2.50%",
+     "mem": "80MiB / 1.8GiB",
+     "memPerc": "2.1%",
+     "node": "pi4-garage",
+     "ncpu": 4,
+     "memTotal": 1932735283
+    },
+    "4aa3241bbea0b6eb0288dbc91": {
+     "cpu": "5.50%",
+     "mem": "80MiB / 7.6GiB",
+     "memPerc": "2.1%",
+     "node": "zimaboard",
+     "ncpu": 4,
+     "memTotal": 8160437862
+    },
+    "305db77aa741d1fe27a6ae487": {
+     "cpu": "5.50%",
+     "mem": "80MiB / 3.7GiB",
+     "memPerc": "2.1%",
+     "node": "raspberrypi",
+     "ncpu": 4,
+     "memTotal": 3972844748
+    },
+    "220f3381ec306b716488ee43d": {
+     "cpu": "2.50%",
+     "mem": "80MiB / 3.7GiB",
+     "memPerc": "2.1%",
+     "node": "raspberrypi",
+     "ncpu": 4,
+     "memTotal": 3972844748
+    },
+    "a6c30bee550e49d83e8c45c1a": {
+     "cpu": "4.50%",
+     "mem": "80MiB / 7.8GiB",
+     "memPerc": "2.1%",
+     "node": "pi5",
+     "ncpu": 4,
+     "memTotal": 8375186227
+    },
+    "366773bfb5f0ba56f377a191e": {
+     "cpu": "3.50%",
+     "mem": "90MiB / 3.7GiB",
+     "memPerc": "2.1%",
+     "node": "raspberrypi",
+     "ncpu": 4,
+     "memTotal": 3972844748
+    },
+    "93f29d556c36cc16f046ad2f1": {
+     "cpu": "4.50%",
+     "mem": "100MiB / 15.5GiB",
+     "memPerc": "2.1%",
+     "node": "nuc",
+     "ncpu": 8,
+     "memTotal": 16642998272
+    },
+    "86fddb416ef8962c20ff8eb58": {
+     "cpu": "5.50%",
+     "mem": "110MiB / 7.8GiB",
+     "memPerc": "2.1%",
+     "node": "pi5",
+     "ncpu": 4,
+     "memTotal": 8375186227
+    },
+    "3be87b70955d522425a95f7d4": {
+     "cpu": "6.50%",
+     "mem": "120MiB / 7.6GiB",
+     "memPerc": "2.1%",
+     "node": "zimaboard",
+     "ncpu": 4,
+     "memTotal": 8160437862
+    },
+    "c92b2e6d6dd206e37d87e3593": {
+     "cpu": "7.50%",
+     "mem": "130MiB / 1.8GiB",
+     "memPerc": "2.1%",
+     "node": "pi4-garage",
+     "ncpu": 4,
+     "memTotal": 1932735283
+    },
+    "8e92a7db822bd5ddbf5c288ec": {
+     "cpu": "8.50%",
+     "mem": "140MiB / 31.1GiB",
+     "memPerc": "2.1%",
+     "node": "mini-pc",
+     "ncpu": 16,
+     "memTotal": 33393370726
+    },
+    "4695539618020e3ac0a824577": {
+     "cpu": "2.50%",
+     "mem": "80MiB / 31.1GiB",
+     "memPerc": "2.1%",
+     "node": "mini-pc",
+     "ncpu": 16,
+     "memTotal": 33393370726
+    },
+    "561b83a12ee95bee79c615024": {
+     "cpu": "4.50%",
+     "mem": "80MiB / 7.6GiB",
+     "memPerc": "2.1%",
+     "node": "zimaboard",
+     "ncpu": 4,
+     "memTotal": 8160437862
+    },
+    "6693a8363ce5ef60f89e6ef57": {
+     "cpu": "5.50%",
+     "mem": "90MiB / 1.8GiB",
+     "memPerc": "2.1%",
+     "node": "pi4-garage",
+     "ncpu": 4,
+     "memTotal": 1932735283
+    },
+    "7f2b145d90bb5fb38295d6300": {
+     "cpu": "6.50%",
+     "mem": "100MiB / 31.1GiB",
+     "memPerc": "2.1%",
+     "node": "mini-pc",
+     "ncpu": 16,
+     "memTotal": 33393370726
+    },
+    "6c3b91ee9f94b7f18edab7794": {
+     "cpu": "5.50%",
+     "mem": "90MiB / 3.7GiB",
+     "memPerc": "2.1%",
+     "node": "raspberrypi",
+     "ncpu": 4,
+     "memTotal": 3972844748
+    },
+    "9991bc80db377e792eb61a207": {
+     "cpu": "6.50%",
+     "mem": "100MiB / 15.5GiB",
+     "memPerc": "2.1%",
+     "node": "nuc",
+     "ncpu": 8,
+     "memTotal": 16642998272
+    },
+    "45c339d8f6c7cf74ec17e6896": {
+     "cpu": "7.50%",
+     "mem": "110MiB / 7.8GiB",
+     "memPerc": "2.1%",
+     "node": "pi5",
+     "ncpu": 4,
+     "memTotal": 8375186227
+    },
+    "c00ed15acddf98ca6795e435f": {
+     "cpu": "8.50%",
+     "mem": "120MiB / 7.6GiB",
+     "memPerc": "2.1%",
+     "node": "zimaboard",
+     "ncpu": 4,
+     "memTotal": 8160437862
+    },
+    "359944ea08833852a6cd9b2c4": {
+     "cpu": "9.50%",
+     "mem": "130MiB / 1.8GiB",
+     "memPerc": "2.1%",
+     "node": "pi4-garage",
+     "ncpu": 4,
+     "memTotal": 1932735283
+    },
+    "4ecda3b17f5d7d17e86579a48": {
+     "cpu": "10.50%",
+     "mem": "140MiB / 31.1GiB",
+     "memPerc": "2.1%",
+     "node": "mini-pc",
+     "ncpu": 16,
+     "memTotal": 33393370726
+    }
+   }
+  },
+  "updates": {
+   "enabled": false,
+   "checked": null
+  },
+  "config": {
+   "remoteRows": "always",
+   "hostColumn": true,
+   "refresh": 15,
+   "folderLoad": "total"
+  },
+  "errors": [],
+  "time": 1795280692
+ },
+ "local": [
+  {
+   "name": "mariadb",
+   "short": "mariadb",
+   "image": "lscr.io/linuxserver/mariadb:latest",
+   "manager": "dockerman",
+   "compose": "",
+   "labels": {},
+   "ports": [
+    3306
+   ],
+   "net": "bridge",
+   "running": true,
+   "autostart": true,
+   "id": "ea1bed30f520"
+  },
+  {
+   "name": "nextcloud",
+   "short": "nextcloud",
+   "image": "lscr.io/linuxserver/nextcloud:latest",
+   "manager": "dockerman",
+   "compose": "",
+   "labels": {},
+   "ports": [
+    443
+   ],
+   "net": "bridge",
+   "running": true,
+   "autostart": true,
+   "id": "53928e069bcd"
+  },
+  {
+   "name": "swag",
+   "short": "swag",
+   "image": "lscr.io/linuxserver/swag:latest",
+   "manager": "dockerman",
+   "compose": "",
+   "labels": {},
+   "ports": [
+    80,
+    443
+   ],
+   "net": "proxynet",
+   "running": true,
+   "autostart": true,
+   "id": "337c63d25fd5"
+  },
+  {
+   "name": "vaultwarden",
+   "short": "vaultwarden",
+   "image": "vaultwarden/server:latest",
+   "manager": "dockerman",
+   "compose": "",
+   "labels": {},
+   "ports": [],
+   "net": "bridge",
+   "running": false,
+   "autostart": false,
+   "id": "c4d0092b9f46"
+  },
+  {
+   "name": "media-jellyfin-1",
+   "short": "jellyfin",
+   "image": "jellyfin/jellyfin:latest",
+   "manager": "composeman",
+   "compose": "media",
+   "labels": {
+    "com.docker.compose.project": "media"
+   },
+   "ports": [
+    8096
+   ],
+   "net": "bridge",
+   "running": true,
+   "autostart": true,
+   "id": "8b5fdaf895ae"
+  },
+  {
+   "name": "smarthome_homeassistant.1.1f345e16a8d4742f73ef1ce4d",
+   "short": "homeassistant",
+   "image": "ghcr.io/home-assistant/home-assistant:stable",
+   "manager": "",
+   "compose": "",
+   "labels": {
+    "com.docker.swarm.service.name": "smarthome_homeassistant",
+    "com.docker.stack.namespace": "smarthome",
+    "com.docker.swarm.task.id": "1f345e16a8d4742f73ef1ce4d"
+   },
+   "ports": [
+    8123
+   ],
+   "net": "smarthome_default",
+   "running": true,
+   "autostart": false,
+   "id": "f43ea4b93df0"
+  },
+  {
+   "name": "smarthome_esphome.1.654d830aa1e4b13c1d23be9ad",
+   "short": "esphome",
+   "image": "ghcr.io/esphome/esphome:stable",
+   "manager": "",
+   "compose": "",
+   "labels": {
+    "com.docker.swarm.service.name": "smarthome_esphome",
+    "com.docker.stack.namespace": "smarthome",
+    "com.docker.swarm.task.id": "654d830aa1e4b13c1d23be9ad"
+   },
+   "ports": [],
+   "net": "smarthome_default",
+   "running": true,
+   "autostart": false,
+   "id": "13e9a7f46754"
+  },
+  {
+   "name": "smarthome_whoami.1.a28669580bb7db9b73f4d9763",
+   "short": "whoami",
+   "image": "traefik/whoami:latest",
+   "manager": "",
+   "compose": "",
+   "labels": {
+    "com.docker.swarm.service.name": "smarthome_whoami",
+    "com.docker.stack.namespace": "smarthome",
+    "com.docker.swarm.task.id": "a28669580bb7db9b73f4d9763"
+   },
+   "ports": [
+    8088
+   ],
+   "net": "smarthome_default",
+   "running": true,
+   "autostart": false,
+   "id": "946170852781"
+  },
+  {
+   "name": "monitoring_node-exporter.n1unraid0000000000000000a.cba48c7d395528c570a7daa1f",
+   "short": "node-exporter",
+   "image": "prom/node-exporter:latest",
+   "manager": "",
+   "compose": "",
+   "labels": {
+    "com.docker.swarm.service.name": "monitoring_node-exporter",
+    "com.docker.stack.namespace": "monitoring",
+    "com.docker.swarm.task.id": "cba48c7d395528c570a7daa1f"
+   },
+   "ports": [],
+   "net": "monitoring_default",
+   "running": true,
+   "autostart": false,
+   "id": "b7ca1c76c606"
+  },
+  {
+   "name": "swarm-view-agent.0608c4054662dd902e1314f7e",
+   "short": "agent",
+   "image": "alpine:latest",
+   "manager": "",
+   "compose": "",
+   "labels": {
+    "com.docker.swarm.service.name": "swarm-view-agent"
+   },
+   "ports": [],
+   "net": "bridge",
+   "running": true,
+   "autostart": false,
+   "id": "019bbd7bb66b"
+  }
+ ],
+ "orphans": [
+  {
+   "id": "c5704c6bf306",
+   "tags": "oldimage:1.0"
+  },
+  {
+   "id": "99383f6a8c0d",
+   "tags": ""
+  },
+  {
+   "id": "03ae2d94907e",
+   "tags": "&lt;none&gt;:&lt;none&gt;"
+  },
+  {
+   "id": "591694466c98",
+   "tags": "eclipse-mosquitto:2"
+  }
+ ]
+}

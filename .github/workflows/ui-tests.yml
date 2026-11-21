@@ -1,7 +1,7 @@
 name: UI tests
 
 # Runs the original Unraid Docker page with Folder View 3/2, Compose Manager and Swarm View in headless Chrome
-# (tests/bench). Pull requests: quick set with 1 worker. Nightly and on demand: all scenarios with 1, 2 and 3 workers,
+# (tests/bench). Pull requests: quick set with 1 worker. Nightly and on demand: all scenarios with 1, 2 and 6 workers,
 # always against the current versions of Unraid's webgui, Folder View and Compose Manager.
 on:
   pull_request:
@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        workers: ${{ fromJSON(github.event_name == 'pull_request' && '[1]' || '[1, 2, 3]') }}
+        workers: ${{ fromJSON(github.event_name == 'pull_request' && '[1]' || '[1, 2, 6]') }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -48,7 +48,16 @@ jobs:
         run: |
           r=$(ls -d tests/bench/out*/report.md 2>/dev/null | head -1)
           [ -n "$r" ] && { sed -n '1,3p' "$r"; grep -E '^## ❌' "$r" || true; } >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload report and screenshots
+          g=$(ls -d tests/bench/out*/gallery 2>/dev/null | head -1)
+          [ -n "$g" ] && { echo; echo "**Screenshots** (artifact *screenshots-${{ matrix.workers }}-worker*): $(ls "$g" | sed 's/\.png$//' | paste -sd ',' | sed 's/,/, /g')"; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: screenshots-${{ matrix.workers }}-worker
+          path: tests/bench/out*/gallery/
+          retention-days: 30
+      - name: Upload full report
         if: always()
         uses: actions/upload-artifact@v6
         with:

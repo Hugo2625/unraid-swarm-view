@@ -15,7 +15,7 @@ const SVTB_DEFAULTS = [
     'folders'    => 'default',    // FolderView folder set: default | alias-regex | none | all-remote
     'locked'     => false,        // Unraid "unlock sortable" active
     'swarmview'  => true,         // false = baseline without Swarm View
-    'workers'    => 1,            // 1–3 worker nodes besides Unraid (cookie svtb_w / ?w= overrides)
+    'workers'    => 1,            // 1–3 or 6 worker nodes besides Unraid (cookie svtb_w / ?w= overrides)
 ];
 
 function svtb_scenario(): array {
@@ -23,7 +23,7 @@ function svtb_scenario(): array {
     $file = BENCH . "/scenarios/$name.json";
     $s = is_file($file) ? (json_decode(file_get_contents($file), true) ?: []) : [];
     $s = array_replace(SVTB_DEFAULTS, $s);
-    if (isset($_COOKIE['svtb_w']) && (int)$_COOKIE['svtb_w'] >= 1) $s['workers'] = min(3, (int)$_COOKIE['svtb_w']);
+    if (isset($_COOKIE['svtb_w']) && (int)$_COOKIE['svtb_w'] >= 1) $s['workers'] = min(6, (int)$_COOKIE['svtb_w']);
     $s['name'] = $name;
     svtb_prepare($s);
     return $s;
@@ -64,7 +64,8 @@ function svtb_prepare(array $s): void {
 
 function svtb_world(int $workers = 0): array {
     static $cache = [];
-    $n = $workers ?: max(1, min(3, (int)($GLOBALS['SVTB_WORKERS'] ?? 1)));
+    $n = $workers ?: max(1, min(6, (int)($GLOBALS['SVTB_WORKERS'] ?? 1)));
+    if (!in_array($n, [1, 2, 3, 6], true)) $n = $n > 3 ? 6 : 3;
     $file = BENCH . '/scenarios/' . ($n === 1 ? 'world.json' : "world-w$n.json");
     return $cache[$n] ??= json_decode(file_get_contents($file), true);
 }

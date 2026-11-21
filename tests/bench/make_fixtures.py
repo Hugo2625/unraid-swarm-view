@@ -48,8 +48,13 @@ WORKERS = [  # (hostname, arch, cpus, memGB)
     ('raspberrypi', 'aarch64', 4, 3.7),
     ('nuc', 'x86_64', 8, 15.5),
     ('pi5', 'aarch64', 4, 7.8),
+    ('zimaboard', 'x86_64', 4, 7.6),
+    ('pi4-garage', 'aarch64', 4, 1.8),
+    ('mini-pc', 'x86_64', 16, 31.1),
 ]
-NODE_IDS = {'Unraid': 'n1unraid0000000000000000a', 'raspberrypi': 'n2raspberrypi000000000000', 'nuc': 'n3nuc00000000000000000000', 'pi5': 'n4pi500000000000000000000'}
+NODE_IDS = {'Unraid': 'n1unraid0000000000000000a'}
+for _i, _w in enumerate(WORKERS, 2):
+    NODE_IDS[_w[0]] = (f'n{_i}' + _w[0].replace('-', '') + '0' * 25)[:25]
 
 
 def build(nw):
@@ -57,11 +62,14 @@ def build(nw):
     workers = [w[0] for w in WORKERS[:nw]]
     w2 = workers[1] if nw >= 2 else 'raspberrypi'     # second worker (paperless lives there)
     w3 = workers[2] if nw >= 3 else w2
+    w4 = workers[3] if nw >= 4 else w2
+    w5 = workers[4] if nw >= 5 else w2
+    w6 = workers[5] if nw >= 6 else w3
     stacks = [
         {'name': 'paperless', 'services': [
             svc('paperless', 'paperless-ngx', 'ghcr.io/paperless-ngx/paperless-ngx:latest', w2, [8000], alias='Paperless', update={'remote': 'x'}),
-            svc('paperless', 'broker', 'redis:7', w2, mounts=False),
-            svc('paperless', 'gotenberg', 'gotenberg/gotenberg:8', w2, mounts=False)]},
+            svc('paperless', 'broker', 'redis:7', w5, mounts=False),
+            svc('paperless', 'gotenberg', 'gotenberg/gotenberg:8', w4, mounts=False)]},
         {'name': 'smarthome', 'services': [
             svc('smarthome', 'homeassistant', 'ghcr.io/home-assistant/home-assistant:stable', 'Unraid', [8123], alias='HomeAssistant',
                 constraints=['node.role == manager'], update={'remote': 'x'}),
@@ -73,6 +81,10 @@ def build(nw):
             svc('smarthome', 'whoami', 'traefik/whoami:latest', ['Unraid'] + workers, [8088], alias='whoami'),
         ]},
     ]
+    if nw >= 6:   # a stack that lives on the sixth worker only, and one with replicas spread over several workers
+        stacks.append({'name': 'tools', 'services': [
+            svc('tools', 'uptime-kuma', 'louislam/uptime-kuma:1', w6, [3001], alias='Uptime Kuma'),
+            svc('tools', 'it-tools', 'corentinth/it-tools:latest', [w4, w5, w6], [8085])]})
     if nw >= 2:   # global service: one task per node, slot = node ID
         g = svc('monitoring', 'node-exporter', 'prom/node-exporter:latest', ['Unraid'] + workers, mounts=False)
         g['mode'] = 'global'; g['desired'] = None
@@ -98,6 +110,9 @@ def build(nw):
                          'testing': {'path': '/boot/config/plugins/swarm-view/stacks/testing', 'description': ''}}
     if nw >= 2:
         base['stackInfo']['monitoring'] = {'path': '/boot/config/plugins/swarm-view/stacks/monitoring', 'description': 'Metrics on every node'}
+    if nw >= 6:
+        base['managed'].append('tools')
+        base['stackInfo']['tools'] = {'path': '/boot/config/plugins/swarm-view/stacks/tools', 'description': 'Small tools'}
     base['nodes'] = [{'id': NODE_IDS['Unraid'], 'hostname': 'Unraid', 'self': True, 'role': 'manager', 'availability': 'active', 'state': 'ready',
                       'addr': '192.168.1.10', 'leader': True, 'arch': 'x86_64', 'cpus': 12, 'memGB': 31.2, 'engine': '27.5.1', 'labels': {}}]
     for i, (h, arch, cpus, mem) in enumerate(WORKERS[:nw]):
@@ -107,7 +122,7 @@ def build(nw):
     base['stats']['tasks'] = stats_tasks
     base['stats']['nodes'] = {'Unraid': {'cpu': 18.4, 'mem': 41, 'stale': False, 'ncpu': 12, 'ts': int(NOW.timestamp())}}
     for i, (h, arch, cpus, mem) in enumerate(WORKERS[:nw]):
-        base['stats']['nodes'][h] = {'cpu': [37.9, 12.3, 55.0][i], 'mem': [78, 35, 61][i], 'stale': False, 'ncpu': cpus, 'ts': int(NOW.timestamp())}
+        base['stats']['nodes'][h] = {'cpu': [37.9, 12.3, 55.0, 8.4, 71.2, 22.0][i], 'mem': [78, 35, 61, 44, 89, 17][i], 'stale': False, 'ncpu': cpus, 'ts': int(NOW.timestamp())}
     base['time'] = int(NOW.timestamp())
     return base, stacks
 
@@ -124,7 +139,7 @@ def local_ct(name, short, image, manager='dockerman', compose='', labels=None, p
 orphans = [{'id': tid('img1', 12), 'tags': 'oldimage:1.0'}, {'id': tid('img2', 12), 'tags': ''},
            {'id': tid('img3', 12), 'tags': '&lt;none&gt;:&lt;none&gt;'}, {'id': tid('img4', 12), 'tags': 'eclipse-mosquitto:2'}]
 
-for nw in (1, 2, 3):
+for nw in (1, 2, 3, 6):
     base, stacks = build(nw)
     local.clear()
     local_ct('mariadb', 'mariadb', 'lscr.io/linuxserver/mariadb:latest', ports=[3306])

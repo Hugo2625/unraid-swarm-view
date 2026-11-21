@@ -1,9 +1,10 @@
 # Swarm View – test bench
 
-GitHub Actions runs this bench on every pull request (quick set) and every night (all scenarios with 1, 2 and 3 workers) – see `.github/workflows/ui-tests.yml`.
+GitHub Actions runs this bench on every pull request (quick set) and every night (all scenarios with 1, 2 and 6 workers) – see `.github/workflows/ui-tests.yml`.
 
 Runs the **original** Docker page of Unraid together with Folder View 3 / Folder View 2, Compose Manager and
 Swarm View in headless Chrome – against mocked backends – and checks that everything still works together.
+Each run also saves a few curated screenshots in `<out>/gallery` (Docker page, container list with open folders, Swarm section, node down, German, light theme, mobile).
 
 ## What is real, what is mocked
 
@@ -35,7 +36,7 @@ python3 make_fixtures.py              # only after changing the test data
 python3 run_tests.py                  # all scenarios → out/report.md, out/results.json, out/<scenario>.png
 python3 run_tests.py --quick          # the small set the pull-request check runs
 python3 run_tests.py default fv2      # single scenarios
-python3 run_tests.py --workers 3      # same scenarios with 3 worker nodes (raspberrypi, nuc, pi5) → out-w3/
+python3 run_tests.py --workers 6      # same scenarios with 6 worker nodes → out-w6/ (also 2 or 3)
 python3 backend/test_backend.py       # api.php / actions.php with a fake docker CLI in 13 cluster states (incl. 3 workers, worker down)
 ```
 
@@ -54,7 +55,7 @@ python3 backend/test_backend.py       # api.php / actions.php with a fake docker
 | `folders` | `default` · `alias-regex` · `all-remote` · `none` |
 | `unraidList` | `ok` · `empty` |
 | `_viewport` | `[width, height]`, e.g. `[390, 844]` |
-| `workers` | `1`–`3` worker nodes (also `run_tests.py --workers N` or `/Docker?s=…&w=N`) – with 2+ workers the test data adds a global service (`monitoring_node-exporter`, one task per node) |
+| `workers` | `1`, `2`, `3` or `6` worker nodes (also `run_tests.py --workers N` or `/Docker?s=…&w=N`) – with 2+ workers the test data adds a global service (`monitoring_node-exporter`, one task per node) |
 
 New scenario = new JSON file. New check = add it to `checks.js` (runs inside the page, gets the API answer and the scenario).
 

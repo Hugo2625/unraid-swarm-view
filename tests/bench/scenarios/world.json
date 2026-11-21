@@ -92,8 +92,8 @@
         "local": false,
         "current": "Running 3 hours ago",
         "error": "",
-        "created": "2026-11-19T12:31:27Z",
-        "since": "2026-11-21T11:31:27Z",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
         "containerId": "5a2b76e657d4",
         "networks": [
          {
@@ -143,8 +143,8 @@
         "local": false,
         "current": "Running 3 hours ago",
         "error": "",
-        "created": "2026-11-19T12:31:27Z",
-        "since": "2026-11-21T11:31:27Z",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
         "containerId": "981fa6440011",
         "networks": [
          {
@@ -192,8 +192,8 @@
         "local": false,
         "current": "Running 3 hours ago",
         "error": "",
-        "created": "2026-11-19T12:31:27Z",
-        "since": "2026-11-21T11:31:27Z",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
         "containerId": "7f032cac9a1d",
         "networks": [
          {
@@ -261,8 +261,8 @@
         "local": true,
         "current": "Running 3 hours ago",
         "error": "",
-        "created": "2026-11-19T12:31:27Z",
-        "since": "2026-11-21T11:31:27Z",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
         "containerId": "ee109d54c23a",
         "networks": [
          {
@@ -330,8 +330,8 @@
         "local": false,
         "current": "Running 3 hours ago",
         "error": "",
-        "created": "2026-11-19T12:31:27Z",
-        "since": "2026-11-21T11:31:27Z",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
         "containerId": "b17fc65a44db",
         "networks": [
          {
@@ -392,8 +392,8 @@
         "local": false,
         "current": "Running 3 hours ago",
         "error": "",
-        "created": "2026-11-19T12:31:27Z",
-        "since": "2026-11-21T11:31:27Z",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
         "containerId": "33758a67b2da",
         "networks": [
          {
@@ -455,8 +455,8 @@
         "local": false,
         "current": "Running 3 hours ago",
         "error": "",
-        "created": "2026-11-19T12:31:27Z",
-        "since": "2026-11-21T11:31:27Z",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
         "containerId": "c3198364559a",
         "networks": [
          {
@@ -513,8 +513,8 @@
         "local": true,
         "current": "Running 3 hours ago",
         "error": "",
-        "created": "2026-11-19T12:31:27Z",
-        "since": "2026-11-21T11:31:27Z",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
         "containerId": "2229822d4b5b",
         "networks": [
          {
@@ -575,8 +575,8 @@
         "local": true,
         "current": "Running 3 hours ago",
         "error": "",
-        "created": "2026-11-19T12:31:27Z",
-        "since": "2026-11-21T11:31:27Z",
+        "created": "2026-11-19T14:04:52Z",
+        "since": "2026-11-21T13:04:52Z",
         "containerId": "cd0d658d466c",
         "networks": [
          {
@@ -592,8 +592,8 @@
         "local": false,
         "current": "Running 3 hours ago",
         "error": "",
-        "created": "2026-11-19T11:31:27Z",
-        "since": "2026-11-21T10:31:27Z",
+        "created": "2026-11-19T13:04:52Z",
+        "since": "2026-11-21T12:04:52Z",
         "containerId": "fa7e9c9ed768",
         "networks": [
          {
@@ -654,14 +654,14 @@
      "mem": 41,
      "stale": false,
      "ncpu": 12,
-     "ts": 1795275087
+     "ts": 1795280692
     },
     "raspberrypi": {
      "cpu": 37.9,
      "mem": 78,
      "stale": false,
      "ncpu": 4,
-     "ts": 1795275087
+     "ts": 1795280692
     }
    },
    "tasks": {
@@ -734,7 +734,7 @@
    "folderLoad": "total"
   },
   "errors": [],
-  "time": 1795275087
+  "time": 1795280692
  },
  "local": [
   {

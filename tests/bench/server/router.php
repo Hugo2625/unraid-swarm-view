@@ -14,7 +14,7 @@ svtb_log($uri);
 /* ---------- Docker tab ---------- */
 if ($uri === '/' || $uri === '/Docker') {
     if (isset($_GET['s'])) { setcookie('svtb', $_GET['s'], 0, '/'); $_COOKIE['svtb'] = $_GET['s']; }
-    $w = (string)max(1, min(3, (int)($_GET['w'] ?? 1)));
+    $w = (string)max(1, min(6, (int)($_GET['w'] ?? 1)));
     setcookie('svtb_w', $w, 0, '/'); $_COOKIE['svtb_w'] = $w;
     $S = svtb_scenario();
     require __DIR__ . '/page.php';

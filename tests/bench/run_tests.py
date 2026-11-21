@@ -16,8 +16,9 @@ ap.add_argument('scenarios', nargs='*')
 ap.add_argument('--no-shots', action='store_true')
 ap.add_argument('--chrome', default=os.environ.get('CHROME', '/usr/bin/google-chrome'))
 ap.add_argument('--settle', type=int, default=4500, help='ms to wait after load')
-ap.add_argument('--workers', type=int, default=1, help='worker nodes besides Unraid (1–3)')
+ap.add_argument('--workers', type=int, default=1, help='worker nodes besides Unraid (1–3 or 6)')
 ap.add_argument('--quick', action='store_true', help='small set of scenarios (for pull requests)')
+ap.add_argument('--no-gallery', action='store_true', help='skip the curated screenshots in <out>/gallery')
 args = ap.parse_args()
 QUICK = ['default', 'fv2', 'no-fv', 'pos-top', 'basic-view', 'lang-de', 'api-error500', 'api-pi-down', 'api-slow-fv3', 'mobile', 'baseline']
 names = args.scenarios or (QUICK if args.quick else None) or sorted(os.path.basename(f)[:-5] for f in glob.glob(os.path.join(HERE, 'scenarios', '*.json'))
@@ -26,6 +27,40 @@ if args.workers > 1:
     OUT = os.path.join(HERE, f'out-w{args.workers}')
 os.makedirs(OUT, exist_ok=True)
 results = {}
+
+# Curated screenshots per run (<out>/gallery): taken right after loading, before the checks change the page
+GALLERY = {
+    'default':     [('docker-page', None), ('container-list', '#docker_containers'), ('container-list-folders-open', '#docker_containers'),
+                    ('swarm-section', '#sv-root')],
+    'fv2':         [('container-list-fv2', '#docker_containers')],
+    'no-fv':       [('container-list-no-folderview', '#docker_containers')],
+    'basic-view':  [('container-list-basic', '#docker_containers')],
+    'api-pi-down': [('node-down', '#sv-root')],
+    'lang-de':     [('swarm-section-de', '#sv-root')],
+    'theme-white': [('swarm-section-white', '#sv-root'), ('container-list-white', '#docker_containers')],
+    'mobile':      [('mobile-swarm', '#sv-root'), ('mobile-page', 'viewport')],
+    'pos-top':     [('position-top', 'viewport')],
+}
+
+
+def gallery(page, name):
+    gdir = os.path.join(OUT, 'gallery')
+    os.makedirs(gdir, exist_ok=True)
+    for label, sel in GALLERY.get(name, []):
+        path = os.path.join(gdir, f'{label}.png')
+        try:
+            if label.endswith('folders-open'):
+                # open every Folder View folder (FV3/FV2 dropdown buttons) so the members are visible
+                page.evaluate("document.querySelectorAll('#docker_list tr.folder .folder-dropdown').forEach(b => { if (b.getAttribute('active') !== 'true') b.click(); })")
+                page.wait_for_timeout(800)
+            if sel is None:
+                page.screenshot(path=path, full_page=True)
+            elif sel == 'viewport':
+                page.screenshot(path=path, full_page=False)
+            else:
+                page.locator(sel).first.screenshot(path=path)
+        except Exception as e:
+            print(f'      (gallery {label}: {str(e)[:120]})')
 
 with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=args.chrome if os.path.exists(args.chrome) else None, args=['--no-sandbox'])
@@ -41,6 +76,13 @@ with sync_playwright() as p:
         t0 = time.time()
         page.goto(f'{BASE}/Docker?s={name}&w={args.workers}', wait_until='load')
         page.wait_for_timeout(args.settle + int(sc.get('apiDelay', 0)))
+        if not args.no_shots:
+            page.screenshot(path=os.path.join(OUT, f'{name}.png'), full_page=True)
+        if not args.no_gallery and name in GALLERY:
+            gallery(page, name)
+            if name == 'default':   # folders were opened for the gallery – start the checks from a fresh page
+                page.goto(f'{BASE}/Docker?s={name}&w={args.workers}', wait_until='load')
+                page.wait_for_timeout(args.settle)
         try:
             res = page.evaluate(CHECKS, {'stress': True, 'toggle': True, 'lock': True})
         except Exception as e:
@@ -50,8 +92,6 @@ with sync_playwright() as p:
         http_bad = [x for x in http if not (expected_http and expected_http in x)]
         res.append({'id': 'http.no-unexpected-errors', 'ok': not http_bad, 'info': json.dumps(http_bad[:5])})
         res.append({'id': 'console.no-errors', 'ok': not console, 'info': json.dumps(console[:5])})
-        if not args.no_shots:
-            page.screenshot(path=os.path.join(OUT, f'{name}.png'), full_page=True)
         results[name] = {'checks': res, 'seconds': round(time.time() - t0, 1), 'viewport': [w, h]}
         bad = [c for c in res if not c['ok']]
         print(f"{'OK  ' if not bad else 'FAIL'} {name:32} {len(res) - len(bad)}/{len(res)}" + ''.join(f"\n      ✗ {c['id']}: {c['info'][:220]}" for c in bad), flush=True)
