@@ -78,3 +78,33 @@ jobs:
             tests/bench/out*/
             /tmp/bench-server.log
           retention-days: 14
+
+  # Nightly / manual runs on main: publish report + screenshots of all variants as a web page (GitHub Pages)
+  pages:
+    name: Publish results page
+    needs: ui
+    if: always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Collect the results of all variants
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'ui-report-*' --dir results
+          python3 tests/bench/make_site.py site $(find results -name results.json -exec dirname {} \; | sort)
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - name: Deploy
+        id: deploy
+        uses: actions/deploy-pages@v5

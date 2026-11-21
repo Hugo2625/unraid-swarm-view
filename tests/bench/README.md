@@ -4,6 +4,7 @@ GitHub Actions runs this bench on every pull request (quick set) and every night
 
 Runs the **original** Docker page of Unraid together with Folder View 3 / Folder View 2, Compose Manager and
 Swarm View in headless Chrome – against mocked backends – and checks that everything still works together.
+Nightly/manual runs on `main` publish the results as a web page: https://hugo2625.github.io/unraid-swarm-view/ (`make_site.py`).
 Each run also saves a few curated screenshots in `<out>/gallery` (Docker page, container list with open folders, Swarm section, node down, German, light theme, mobile).
 
 ## What is real, what is mocked

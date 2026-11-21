@@ -68,7 +68,7 @@ Bugs and ideas: [GitHub issues](https://github.com/Hugo2625/unraid-swarm-view/is
 Every push and pull request runs automatic checks ([GitHub Actions](../../actions)):
 
 - **CI** – PHP/JS syntax, translations complete, `swarm-view.plg` built from the current `src/`, version raised when `src/` changed, backend tests of `api.php`/`actions.php` against a fake Docker CLI (`python3 tools/ci_checks.py`, `python3 tests/bench/backend/test_backend.py`)
-- **UI tests** – the original Unraid Docker page with Folder View 3/2, Compose Manager and Swarm View in headless Chrome, 44 scenarios (plugins on/off, section position, views, themes, languages, narrow screens, API errors, slow API, nodes down, settings). Pull requests: quick set; nightly: everything with 1, 2 and 6 worker nodes against the current upstream versions. Report and screenshots are attached to each run. Details: [tests/bench](tests/bench)
+- **UI tests** – the original Unraid Docker page with Folder View 3/2, Compose Manager and Swarm View in headless Chrome, 44 scenarios (plugins on/off, section position, views, themes, languages, narrow screens, API errors, slow API, nodes down, settings). Pull requests: quick set; nightly: everything with 1, 2 and 6 worker nodes against the current upstream versions. Results with screenshots of the latest nightly/manual run: **[hugo2625.github.io/unraid-swarm-view](https://hugo2625.github.io/unraid-swarm-view/)** (also attached to each run). Details: [tests/bench](tests/bench)
 - **Release** – a new version in `swarm-view.plg` on `main` creates a GitHub release with the changelog
 
 Making a change: edit `src/`, add a section to `CHANGES.md`, run `python3 tools/build_plg.py <new version>`, then `python3 tools/ci_checks.py`.
