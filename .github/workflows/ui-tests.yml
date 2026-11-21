@@ -1,0 +1,59 @@
+name: UI tests
+
+# Runs the original Unraid Docker page with Folder View 3/2, Compose Manager and Swarm View in headless Chrome
+# (tests/bench). Pull requests: quick set with 1 worker. Nightly and on demand: all scenarios with 1, 2 and 3 workers,
+# always against the current versions of Unraid's webgui, Folder View and Compose Manager.
+on:
+  pull_request:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ui:
+    name: UI (${{ matrix.workers }} worker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        workers: ${{ fromJSON(github.event_name == 'pull_request' && '[1]' || '[1, 2, 3]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Build the fake Unraid (web root, plugins, flash config)
+        run: sudo tests/bench/setup.sh
+      - name: Start the bench server
+        run: |
+          sudo nohup tests/bench/server.sh > /tmp/bench-server.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf -o /dev/null 'http://127.0.0.1:8090/Docker?s=default' && exit 0; sleep 1; done
+          cat /tmp/bench-server.log; exit 1
+      - name: Run scenarios
+        run: python tests/bench/run_tests.py --workers ${{ matrix.workers }} ${{ github.event_name == 'pull_request' && '--quick' || '' }} --chrome none
+      - name: Summary
+        if: always()
+        run: |
+          r=$(ls -d tests/bench/out*/report.md 2>/dev/null | head -1)
+          [ -n "$r" ] && { sed -n '1,3p' "$r"; grep -E '^## ❌' "$r" || true; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload report and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-report-${{ matrix.workers }}-worker
+          path: |
+            tests/bench/out*/
+            /tmp/bench-server.log
+          retention-days: 14

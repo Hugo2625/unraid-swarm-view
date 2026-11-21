@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build swarm-view.plg (all files inline) from src/swarm-view.
 
-Usage:  python3 tools/build_plg.py <version>        e.g. 2026.11.21
-Writes swarm-view.plg in the repository root. Edit CHANGES.md first: the
+Usage:  python3 tools/build_plg.py <version> [--out FILE]     e.g. 2026.11.21
+Writes swarm-view.plg in the repository root (or FILE). Edit CHANGES.md first: the
 section of the new version becomes the <CHANGES> block of the .plg.
 """
 import pathlib, re, sys
@@ -14,9 +14,14 @@ GITHUB = 'Hugo2625/unraid-swarm-view'
 BRANCH = 'main'
 SUPPORT = 'https://forums.unraid.net/topic/201367-plugin-support-swarm-view-docker-swarm-stacks-on-the-docker-page/'
 
-if len(sys.argv) != 2 or not re.fullmatch(r'\d{4}\.\d{2}\.\d{2}[a-z]?', sys.argv[1]):
-    sys.exit('usage: build_plg.py <version YYYY.MM.DD[letter]>')
-version = sys.argv[1]
+args = sys.argv[1:]
+if '--out' in args:
+    i = args.index('--out')
+    OUT = pathlib.Path(args[i + 1]).resolve()
+    del args[i:i + 2]
+if len(args) != 1 or not re.fullmatch(r'\d{4}\.\d{2}\.\d{2}[a-z]?', args[0]):
+    sys.exit('usage: build_plg.py <version YYYY.MM.DD[letter]> [--out FILE]')
+version = args[0]
 
 changes = (ROOT / 'CHANGES.md').read_text()
 if f'### {version}' not in changes:

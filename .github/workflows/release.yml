@@ -1,0 +1,35 @@
+name: Release
+
+# A new plugin version on main → GitHub release with the changelog of that version and the .plg attached.
+# Releases are created with the owner's token (secret RELEASE_TOKEN), so they appear under the owner's name.
+# Without the secret nothing is published.
+on:
+  push:
+    branches: [main]
+    paths: ['swarm-view.plg']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::No RELEASE_TOKEN secret – no release created (see README → Development)."
+            exit 0
+          fi
+          v=$(sed -n 's/.*<!ENTITY version *"\([^"]*\)".*/\1/p' swarm-view.plg | head -1)
+          if gh release view "v$v" >/dev/null 2>&1; then
+            echo "Release v$v exists already."
+            exit 0
+          fi
+          awk -v v="### $v" '$0 == v {on=1; next} /^### / {on=0} on' CHANGES.md > notes.md
+          printf '\n**Install / update:** Plugins → Install Plugin →\n`https://raw.githubusercontent.com/%s/main/swarm-view.plg`\n' "$GITHUB_REPOSITORY" >> notes.md
+          gh release create "v$v" swarm-view.plg --title "Swarm View $v" --notes-file notes.md --target "$GITHUB_SHA"
