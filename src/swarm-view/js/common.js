@@ -221,7 +221,29 @@
   let keyAtLastListLoad = null;   // which remote containers were in the DOM at the last list load
   const currentRemoteKey = () => (cfg().remoteRows === 'never' ? '' : SV.remoteTasks().map((r) => r.name).sort().join('|'));
 
-  $(document).ajaxSend((e, x, o) => { if (LIST_URL.test(o.url || '')) SV.listPending++; });
+  // Folder View builds its folders asynchronously after the list arrived. A second list load while it is still building
+  // can leave folders empty (Folder View 2 does not cope with overlapping builds) – so wait for its "done" event.
+  let fvBuilding = false, fvTimer = null, fvHooked = false;
+  function fvDone() {
+    fvBuilding = false;
+    clearTimeout(fvTimer);
+    if (reloadWanted && !SV.listPending) { reloadWanted = false; setTimeout(maybeReloadList, 0); }
+  }
+  function hookFolderViewDone() {
+    if (fvHooked || !folderViewActive()) return;
+    try { folderEvents.addEventListener('docker-post-folders-creation', fvDone); fvHooked = true; } catch (e) { /* not there */ }
+  }
+
+  $(document).ajaxSend((e, x, o) => {
+    if (!LIST_URL.test(o.url || '')) return;
+    SV.listPending++;
+    hookFolderViewDone();
+    if (fvHooked) {
+      fvBuilding = true;
+      clearTimeout(fvTimer);
+      fvTimer = setTimeout(fvDone, 10000);   // safety net if Folder View never reports back
+    }
+  });
   // same task as Unraid's callback → the rows about to be inserted come from exactly this data
   $(document).ajaxSuccess((e, x, o) => {
     if (LIST_URL.test(o.url || '')) keyAtLastListLoad = SV.data ? currentRemoteKey() : '';
@@ -234,14 +256,14 @@
       if (SV.listPending) return;
       // safety net: hide an orphaned spinner
       setTimeout(() => { if (!SV.listPending) $('div.spinner.fixed').hide(); }, 700);
-      if (reloadWanted) { reloadWanted = false; maybeReloadList(); }
+      if (reloadWanted && !fvBuilding) { reloadWanted = false; maybeReloadList(); }
     }, 50);
   });
 
   function maybeReloadList() {
     if (!folderViewActive() || typeof window.loadlist !== 'function' || !SV.data) return;
     if (keyAtLastListLoad === null || keyAtLastListLoad === currentRemoteKey()) return;
-    if (SV.listPending) { reloadWanted = true; return; }
+    if (SV.listPending || fvBuilding) { reloadWanted = true; return; }
     window.loadlist();
   }
 

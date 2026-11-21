@@ -22,7 +22,7 @@ Each run also saves a few curated screenshots in `<out>/gallery` (Docker page, c
 ```bash
 sudo tests/bench/setup.sh            # clones the vendor sources, builds /usr/local/emhttp + /boot/config
 sudo tests/bench/setup.sh --update   # same + git pull of all vendor sources
-pip install playwright && playwright install chromium   # or use an installed Chrome via --chrome
+pip install -r tests/bench/requirements.txt && playwright install chromium   # or an installed Chrome via --chrome
 ```
 Swarm View is taken from this repository (`src/swarm-view`); `SV_REPO=/path/to/checkout` overrides it.
 `setup.sh` writes to `/usr/local/emhttp` and `/boot/config` – do not run it on a real Unraid server.
@@ -35,6 +35,7 @@ sudo ./server.sh &                    # http://127.0.0.1:8090/Docker?s=<scenario
 python3 make_fixtures.py              # only after changing the test data
 python3 run_tests.py                  # all scenarios → out/report.md, out/results.json, out/<scenario>.png
 python3 run_tests.py --quick          # the small set the pull-request check runs
+python3 run_tests.py --jobs 8 --shots # more tabs in parallel, full-page screenshot of every scenario (default: failed ones only)
 python3 run_tests.py default fv2      # single scenarios
 python3 run_tests.py --workers 6      # same scenarios with 6 worker nodes → out-w6/ (also 2 or 3)
 python3 backend/test_backend.py       # api.php / actions.php with a fake docker CLI in 13 cluster states (incl. 3 workers, worker down)

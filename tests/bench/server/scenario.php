@@ -31,7 +31,7 @@ function svtb_scenario(): array {
 
 function svtb_dir(array $s): string {
     $d = "/tmp/svtb/{$s['name']}-w" . ($s['workers'] ?? 1);
-    if (!is_dir($d)) mkdir($d, 0777, true);
+    if (!is_dir($d)) @mkdir($d, 0777, true);
     return $d;
 }
 
@@ -43,6 +43,14 @@ function svtb_log(string $uri): void {
 }
 function svtb_scenario_light(): string { return preg_replace('/[^a-z0-9_\-]/i', '', $_COOKIE['svtb'] ?? 'default') ?: 'default'; }
 
+/** Atomic write, skipped when unchanged – several PHP workers serve one scenario at the same time. */
+function svtb_write(string $path, string $content): void {
+    if (@file_get_contents($path) === $content) return;
+    $tmp = $path . '.' . getmypid() . '.tmp';
+    file_put_contents($tmp, $content);
+    rename($tmp, $path);
+}
+
 /** Writes the config files Swarm View and Unraid read for this scenario. */
 function svtb_prepare(array $s): void {
     $d = svtb_dir($s);
@@ -50,11 +58,11 @@ function svtb_prepare(array $s): void {
     $cfg = array_replace(['SWARM_POSITION' => $pos, 'LANGUAGE' => 'auto', 'STATS' => 'yes', 'HOST_COLUMN' => 'yes', 'REMOTE_ROWS' => 'always'], $s['cfg']);
     $txt = '';
     foreach ($cfg as $k => $v) $txt .= "$k=\"$v\"\n";
-    file_put_contents("$d/swarm-view.cfg", $txt);
+    svtb_write("$d/swarm-view.cfg", $txt);
     $rank = ['top' => 0, 'middle' => 1, 'bottom' => 3][$pos];
-    file_put_contents("$d/menu.cfg", "MENU=\"Docker:$rank\"\n");
-    file_put_contents("$d/dynamix.cfg", "[display]\nlocale=\"" . ($s['lang'] === 'de' ? 'de_DE' : '') . "\"\ntheme=\"{$s['theme']}\"\n");
-    if (!is_dir("$d/state")) mkdir("$d/state", 0777, true);
+    svtb_write("$d/menu.cfg", "MENU=\"Docker:$rank\"\n");
+    svtb_write("$d/dynamix.cfg", "[display]\nlocale=\"" . ($s['lang'] === 'de' ? 'de_DE' : '') . "\"\ntheme=\"{$s['theme']}\"\n");
+    if (!is_dir("$d/state")) @mkdir("$d/state", 0777, true);
     $GLOBALS['SVTB_WORKERS'] = $s['workers'] ?? 1;
     putenv("SV_CFG=$d/swarm-view.cfg");
     putenv("SV_STATE=$d/state");

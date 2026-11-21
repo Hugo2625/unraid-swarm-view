@@ -1,4 +1,6 @@
 # Changelog
+### 2026.11.21d
+- Folder View: when the Swarm data arrived while Folder View was still building its folders, a folder could stay empty – Swarm View now waits until Folder View is done before it reloads the list
 ### 2026.11.21c
 - Folder View 3: the host column no longer shrinks to a sliver after switching Basic → Advanced view
 - Folder View 2: Swarm containers running on Unraid are now sorted into folders as well

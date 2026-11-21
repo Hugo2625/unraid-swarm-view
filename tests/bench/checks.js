@@ -5,6 +5,10 @@ async (opts) => {
   const S = window.SVTB.scenario;
   const out = [];
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  // settle instead of fixed sleeps (wait.js); falls back to a sleep if the helper is missing
+  // after a view switch: Folder View 3 sets the final column widths in the next animation frame + a 320 ms transition
+  const afterToggle = async () => { await settle(300); await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); await wait(400); };
+  const settle = (quiet = 400, max = 8000) => (window.svtbSettle ? window.svtbSettle(quiet, max + 2 * (+S.apiDelay || 0)) : wait(Math.min(max, 1500)));
   const check = (id, ok, info) => out.push({ id, ok: !!ok, info: info === undefined ? '' : (typeof info === 'string' ? info : JSON.stringify(info)) });
   const text = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
   const visible = (el) => !!(el && el.offsetParent !== null && getComputedStyle(el).visibility !== 'hidden');
@@ -184,8 +188,8 @@ async (opts) => {
 
   /* ---------- 10. stability: reloads + idle mutations ---------- */
   if (opts && opts.stress) {
-    for (let i = 0; i < 3; i++) { window.loadlist(); await wait(700); }
-    await wait(1500 + 1.5 * (+S.apiDelay || 0));
+    for (let i = 0; i < 3; i++) { window.loadlist(); await wait(100); }
+    await settle(500);
     const remote2 = [...document.querySelectorAll('#docker_list tr.sv-remote-row')].filter(shown).length;
     check('stress.remote-stable', remote2 === remote.length, { before: remote.length, after: remote2 });
     const all2 = [...document.querySelectorAll('#docker_list tr')].filter((tr) => !tr.classList.contains('folder'))
@@ -193,13 +197,21 @@ async (opts) => {
     const dup2 = all2.filter((n, i) => all2.indexOf(n) !== i);
     check('stress.no-duplicates', dup2.length === 0, dup2);
     tableGeometry('after-reload');
-    // mutation storm detection
-    let muts = 0;
-    const mo = new MutationObserver((l) => { muts += l.length; });
-    mo.observe(document.getElementById('docker_list'), { childList: true, subtree: true, attributes: true });
-    await wait(3000);
-    mo.disconnect();
-    check('stress.idle-mutations', muts < 200, `${muts} mutations in 3 s idle`);
+    // update-loop detection (costs 4 s – only where it says something: opts.idle). One burst is fine (Folder View 3
+    // re-measures its column widths ~1.2 s and ~3 s after building the folders, our 15 s refresh); a loop repeats.
+    if (opts.idle) {
+      const per = [];
+      for (let sec = 0; sec < 4; sec++) {
+        let n = 0;
+        const mo = new MutationObserver((l) => { n += l.length; });
+        mo.observe(document.getElementById('docker_list'), { childList: true, subtree: true, attributes: true });
+        await wait(1000);
+        mo.disconnect();
+        per.push(n);
+      }
+      const busySeconds = per.filter((n) => n > 20).length;
+      check('stress.no-update-loop', busySeconds <= 2, `mutations per second: ${per.join(', ')}`);
+    }
     // Unraid live stats (nchan) for a local container + remote values untouched
     const firstLocal = [...document.querySelectorAll('#docker_list tr:not(.sv-remote-row):not(.folder) td.ct-name span.hand[id]')].find((e) => /^[0-9a-f]{12}$/.test(e.id));
     if (firstLocal && window.SVTB.nchan['/sub/dockerload']) {
@@ -217,15 +229,22 @@ async (opts) => {
     const sw = document.querySelector('.advancedview');
     const btn = sw && sw.parentElement.querySelector('.switch-button-background, .switch-button-button');
     if (btn) {
-      btn.click(); await wait(1200);
+      btn.click(); await afterToggle();
       tableGeometry(advanced() ? 'advanced-toggled' : 'basic-toggled');
       const hostVisible = [...document.querySelectorAll('#docker_containers th.sv-hostcol')].some(visible);
       check('toggle.host-column', advanced() ? hostVisible === !!(api && api.config.hostColumn && apiOk) : !hostVisible, { advanced: advanced(), hostVisible });
-      btn.click(); await wait(1200);
+      btn.click(); await afterToggle();
       tableGeometry(advanced() ? 'advanced-back' : 'basic-back');
       // the host column must keep a usable width after switching back (Folder View 3 fixes column widths)
       const th = document.querySelector('#docker_containers th.sv-hostcol');
-      if (th && visible(th)) check('toggle.host-column-width', th.getBoundingClientRect().width >= 80, Math.round(th.getBoundingClientRect().width) + 'px');
+      if (th && visible(th)) {
+        // Folder View 3 animates column widths with a CSS transition (no DOM mutation) – wait until the width is stable
+        let prev = -1, wNow = th.getBoundingClientRect().width;
+        for (let i = 0; i < 30 && Math.abs(wNow - prev) > 0.5; i++) { await wait(100); prev = wNow; wNow = th.getBoundingClientRect().width; }
+        const allW = [...document.querySelectorAll('#docker_containers > thead > tr > th')].map((t) => `${(t.className || 'app').split(' ').pop()}=${Math.round(t.getBoundingClientRect().width)}${t.style.width ? '(' + t.style.width + ')' : ''}`).join(' ');
+        check('toggle.host-column-width', wNow >= 80, wNow >= 80 ? Math.round(wNow) + 'px'
+          : `${Math.round(wNow)}px · ${allW} · layout=${getComputedStyle(document.getElementById('docker_containers')).tableLayout} · body.sv-advanced=${document.body.classList.contains('sv-advanced')} · cookie=${advanced()}`);
+      }
     } else check('toggle.switch-found', false, 'no switch');
   }
 

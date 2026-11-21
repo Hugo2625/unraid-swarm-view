@@ -4,8 +4,7 @@
  * + the minimal globals the pages expect. */
 $docroot = '/usr/local/emhttp';
 putenv('SV_DOCKER=/bin/false');
-@copy(svtb_dir($S) . '/menu.cfg', '/boot/config/plugins/swarm-view/menu.cfg');
-@copy(svtb_dir($S) . '/dynamix.cfg', '/boot/config/plugins/dynamix/dynamix.cfg');
+// no shared files: the section rank comes from the scenario (see below), the language via SV_DYNAMIX_CFG (scenario.php)
 
 // --- Unraid globals/helpers the pages use ---
 require_once "$docroot/webGui/include/Wrappers.php";
@@ -37,7 +36,13 @@ if ($S['swarmview'] ?? true) build_pages("plugins/swarm-view/*.page");
 if ($S['compose']) build_pages("plugins/compose.manager/*.page");
 if ($S['folderview'] === 'fv3') build_pages("plugins/folder.view3/*.page");
 if ($S['folderview'] === 'fv2') build_pages("plugins/folder.view2/*.page");
-foreach ($site as &$p) unset($p['Cond']); unset($p);   // the scenario decides which plugins are installed
+foreach ($site as &$p) unset($p['Cond']); unset($p);
+// Swarm View reads its rank from /boot/config/plugins/swarm-view/menu.cfg – use the scenario's copy instead,
+// so parallel requests of different scenarios do not overwrite each other
+if (isset($site['SwarmView'])) {
+    $mc = @parse_ini_file(svtb_dir($S) . '/menu.cfg');
+    $site['SwarmView']['Menu'] = $mc['MENU'] ?? 'Docker:3';
+}   // the scenario decides which plugins are installed
 $pages = [];
 foreach (find_pages('Docker') as $k => $p) $pages[$k] = $p;   // no Cond evaluation – the scenario decides
 $order = array_map(fn($p) => $p['name'], $pages);
