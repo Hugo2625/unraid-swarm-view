@@ -10,7 +10,7 @@ import pathlib, re, sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / 'src' / 'swarm-view'
 OUT = ROOT / 'swarm-view.plg'
-GITHUB = 'Hugo2652/unraid-swarm-view'
+GITHUB = 'Hugo2625/unraid-swarm-view'
 BRANCH = 'main'
 SUPPORT = 'https://forums.unraid.net/topic/201367-plugin-support-swarm-view-docker-swarm-stacks-on-the-docker-page/'
 
@@ -35,7 +35,7 @@ support = ' support="&support;"' if SUPPORT else ''
 plg = f"""<?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "swarm-view">
-<!ENTITY author    "Hugo2652">
+<!ENTITY author    "Hugo2625">
 <!ENTITY version   "{version}">
 <!ENTITY github    "{GITHUB}">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/&github;/{BRANCH}/&name;.plg">

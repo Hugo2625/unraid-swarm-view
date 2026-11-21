@@ -1,6 +1,7 @@
 # Changelog
 ### 2026.11.21b
 - Support link to the Unraid forum thread
+- GitHub account renamed to Hugo2625: new plugin URL https://raw.githubusercontent.com/Hugo2625/unraid-swarm-view/main/swarm-view.plg
 ### 2026.11.21a
 - English interface; German stays available. The language follows Unraid's display language or can be chosen in the settings (General → Display → Language)
 - Notifications, messages and the settings page are translated as well

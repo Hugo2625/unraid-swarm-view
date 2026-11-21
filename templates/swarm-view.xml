@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Plugin>
   <Name>Swarm View</Name>
-  <PluginURL>https://raw.githubusercontent.com/Hugo2652/unraid-swarm-view/main/swarm-view.plg</PluginURL>
-  <PluginAuthor>Hugo2652</PluginAuthor>
-  <Project>https://github.com/Hugo2652/unraid-swarm-view</Project>
+  <PluginURL>https://raw.githubusercontent.com/Hugo2625/unraid-swarm-view/main/swarm-view.plg</PluginURL>
+  <PluginAuthor>Hugo2625</PluginAuthor>
+  <Project>https://github.com/Hugo2625/unraid-swarm-view</Project>
   <Support>https://forums.unraid.net/topic/201367-plugin-support-swarm-view-docker-swarm-stacks-on-the-docker-page/</Support>
-  <Icon>https://raw.githubusercontent.com/Hugo2652/unraid-swarm-view/main/icon.png</Icon>
+  <Icon>https://raw.githubusercontent.com/Hugo2625/unraid-swarm-view/main/icon.png</Icon>
   <Category>Tools:Utilities</Category>
   <License>MIT</License>
   <Overview>Docker Swarm on the Unraid Docker page. A "Swarm Stacks" section like Compose Manager lets you create, edit and deploy stack files; Unraid's container list shows on which node each container runs and lists containers on other nodes (e.g. a Raspberry Pi) with CPU/RAM, network, uptime, logs and actions. Choose per service where it runs - automatically, preferred node with failover and automatic return, or fixed. Optional notifications, update hints with rollback, cleanup of stopped task containers and a settings page with node warnings. Requires an active Swarm with Unraid as manager. Works with Folder View.</Overview>

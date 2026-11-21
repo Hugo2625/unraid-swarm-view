@@ -33,7 +33,7 @@ The interface is available in **English** and **German**. It follows Unraid's di
 Until the plugin is listed in Community Applications: *Plugins → Install Plugin* and paste
 
 ```
-https://raw.githubusercontent.com/Hugo2652/unraid-swarm-view/main/swarm-view.plg
+https://raw.githubusercontent.com/Hugo2625/unraid-swarm-view/main/swarm-view.plg
 ```
 
 ## How it works
@@ -59,7 +59,7 @@ All texts in the code are English. Translations live in `src/swarm-view/lang/<co
 ## Support
 
 Questions and help: [support thread in the Unraid forum](https://forums.unraid.net/topic/201367-plugin-support-swarm-view-docker-swarm-stacks-on-the-docker-page/).  
-Bugs and ideas: [GitHub issues](https://github.com/Hugo2652/unraid-swarm-view/issues).
+Bugs and ideas: [GitHub issues](https://github.com/Hugo2625/unraid-swarm-view/issues).
 
 ## License
 
