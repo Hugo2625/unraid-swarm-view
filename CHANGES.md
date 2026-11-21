@@ -1,4 +1,8 @@
 # Changelog
+### 2026.11.21a
+- English interface; German stays available. The language follows Unraid's display language or can be chosen in the settings (General → Display → Language)
+- Notifications, messages and the settings page are translated as well
+- Settings: popup after "Apply" only for noteworthy changes (agent started/stopped, watchdog switched on, swarm values changed)
 ### 2026.11.21
 - First public release
 - Swarm Stacks section on the Docker page: create, edit and deploy stacks (Stack Up / Update Stack / Stack Down), per-service actions (update, rollback, restart, logs, move)

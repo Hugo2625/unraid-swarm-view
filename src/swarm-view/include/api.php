@@ -1,7 +1,7 @@
 <?php
 /*
  * Swarm View – read-only API.
- * Liefert Swarm-Status, Nodes, Stacks/Services/Tasks und lokale Nicht-Swarm-Container als JSON.
+ * Returns swarm state, nodes, stacks/services/tasks and local non-swarm containers as JSON.
  * Aufruf: GET /plugins/swarm-view/include/api.php
  */
 header('Content-Type: application/json; charset=utf-8');
@@ -10,7 +10,7 @@ header('Cache-Control: no-store');
 require_once __DIR__ . '/common.php';
 $errors = [];
 
-/** Führt einen docker-Befehl aus. Gibt stdout zurück oder null (Fehlertext landet in $errors). */
+/** Runs a docker command. Returns stdout or null (the error text goes to $errors). */
 function dk(string $args, string $ctx): ?string {
     global $DOCKER, $errors;
     $out = [];
@@ -24,7 +24,7 @@ function dk(string $args, string $ctx): ?string {
     return $txt;
 }
 
-/** Parst Ausgabe von --format '{{json .}}' (ein JSON-Objekt pro Zeile). */
+/** Parses output of --format '{{json .}}' (one JSON object per line). */
 function jsonLines(?string $txt): array {
     if ($txt === null) return [];
     $rows = [];
@@ -43,7 +43,7 @@ function jsonDoc(?string $txt): array {
     return is_array($d) ? $d : [];
 }
 
-/** "a=b,c=d" aus `docker ps` → Map. Kommas in Werten bleiben erhalten, solange danach kein "key=" folgt. */
+/** "a=b,c=d" from `docker ps` → map. Commas in values are kept as long as no "key=" follows. */
 function parseLabels(string $s): array {
     $map = [];
     if ($s === '') return $map;
@@ -106,7 +106,7 @@ if ($swarm['active'] && $swarm['manager']) {
     /* ---------- Services ---------- */
     $svcLs = jsonLines(dk("service ls --format '{{json .}}'", 'service ls'));
     if ($svcLs) {
-        // Verknüpfung über den Namen: `service ls` kürzt IDs immer auf 12 Zeichen, `inspect` liefert sie voll
+        // join by name: `service ls` always shortens IDs to 12 characters, `inspect` returns them in full
         $lsByName = array_column($svcLs, null, 'Name');
         $svcArg = args(array_column($svcLs, 'ID'));
         $services = [];
@@ -128,7 +128,7 @@ if ($swarm['active'] && $swarm['manager']) {
                 'short'       => ($stack !== '' && str_starts_with($name, "{$stack}_")) ? substr($name, strlen($stack) + 1) : $name,
                 'stack'       => $stack,
                 'image'       => preg_replace('/@sha256:[0-9a-f]+$/i', '', $img),
-                // Ohne Registry-Digest = lokal gebautes Image (z. B. local/node-red-mcp) → nur auf Nodes, die es haben
+                // no registry digest = locally built image (e.g. local/node-red-mcp) → only on nodes that have it
                 'localImage'  => $img !== '' && strpos($img, '@') === false,
                 'mode'        => isset($s['Spec']['Mode']['Global']) ? 'global' : 'replicated',
                 'replicas'    => $ls['Replicas'] ?? '',
@@ -141,9 +141,9 @@ if ($swarm['active'] && $swarm['manager']) {
                 )))),
                 'labels'      => (object)($s['Spec']['TaskTemplate']['ContainerSpec']['Labels'] ?? []),
                 'prefer'      => trim($s['Spec']['Labels']['swarm-view.prefer'] ?? ''),
-                // Anzeigename in Unraids Liste (Ersatz für container_name, das Swarm ignoriert)
+                // display name in Unraid's list (replacement for container_name, which Swarm ignores)
                 'alias'       => mb_substr(trim($s['Spec']['TaskTemplate']['ContainerSpec']['Labels']['swarm-view.name'] ?? ($s['Spec']['Labels']['swarm-view.name'] ?? '')), 0, 64),
-                // Rollback nur anbieten, wenn sich die Image-Version geändert hat (nicht bei Platzierung, Labels …)
+                // offer rollback only if the image version changed (not for placement, labels …)
                 'canRollback' => $prevImg !== '' && $prevImg !== $img,
                 'rollbackTo'  => $prevImg !== '' && $prevImg !== $img ? sv_short_ref($prevImg) : '',
                 'internal'    => !empty($s['Spec']['Labels']['swarm-view.agent']) || !empty($s['Spec']['Labels']['swarm-view.cleanup']),
@@ -158,7 +158,7 @@ if ($swarm['active'] && $swarm['manager']) {
             ];
         }
 
-        /* ---------- Tasks (wo läuft was) ---------- */
+        /* ---------- Tasks (what runs where) ---------- */
         $tasks = jsonLines(dk("service ps $svcArg --no-trunc --filter desired-state=running --format '{{json .}}'", 'service ps'));
         foreach ($tasks as $t) {
             $tn  = $t['Name'] ?? '';
@@ -176,7 +176,7 @@ if ($swarm['active'] && $swarm['manager']) {
             ];
         }
 
-        /* ---------- Details der Tasks auf anderen Nodes: Zeiten, Netzwerke, Container-ID (ein Aufruf) ---------- */
+        /* ---------- Details of tasks on other nodes: times, networks, container ID (one call) ---------- */
         $remoteIds = [];
         foreach ($services as $sv) foreach ($sv['tasks'] as $t) if ($t['id'] !== '' && !$t['local'] && $t['node'] !== '') $remoteIds[] = $t['id'];
         $detail = [];
@@ -211,7 +211,7 @@ if ($swarm['active'] && $swarm['manager']) {
             $svc['rebalancing'] = isset($rebal[$svc['name']]);
             $u = $updates['services'][$svc['name']] ?? null;
             $svc['update'] = $u ? (bool)$u['update'] : null;
-            // Replicas: aus `service ls`; fehlt der Wert, aus den Tasks rechnen
+            // replicas: from `service ls`; if missing, compute from the tasks
             if (!preg_match('/^\d+\/\d+/', (string)$svc['replicas'])) {
                 $run = count(array_filter($svc['tasks'], fn($t) => stripos($t['current'], 'Running') === 0));
                 $want = $svc['desired'] ?? count($svc['tasks']);
@@ -219,14 +219,14 @@ if ($swarm['active'] && $swarm['manager']) {
             }
         }
         unset($svc);
-        // Interne Hilfs-Services (Agent, Aufräum-Job) nicht als Stacks anzeigen
+        // do not show internal helper services (agent, cleanup job) as stacks
         $services = array_filter($services, fn($x) => !$x['internal']);
 
         foreach ($services as $svc) {
-            $key = $svc['stack'] !== '' ? $svc['stack'] : '(ohne Stack)';
+            $key = $svc['stack'] !== '' ? $svc['stack'] : '(no stack)';
             $stacks[$key][] = $svc;
         }
-        uksort($stacks, fn($a, $b) => [$a === '(ohne Stack)', $a] <=> [$b === '(ohne Stack)', $b]);
+        uksort($stacks, fn($a, $b) => [$a === '(no stack)', $a] <=> [$b === '(no stack)', $b]);
         $stacks = array_map(
             fn($name, $svcs) => ['name' => $name, 'services' => array_values(
                 (function ($l) { usort($l, fn($a, $b) => strcmp($a['short'], $b['short'])); return $l; })($svcs)
@@ -236,7 +236,7 @@ if ($swarm['active'] && $swarm['manager']) {
     }
 }
 
-/* ---------- CPU/RAM aus dem Agent ---------- */
+/* ---------- CPU/RAM from the agent ---------- */
 $cfgAll = sv_cfg();
 $stats = ['enabled' => $cfgAll['STATS'] === 'yes', 'nodes' => (object)[], 'tasks' => (object)[]];
 if ($stats['enabled'] && $swarm['active'] && $swarm['manager']) {
@@ -252,7 +252,7 @@ if ($stats['enabled'] && $swarm['active'] && $swarm['manager']) {
             'ncpu'  => (int)($d['ncpu'] ?? 0),
             'ts'    => (int)($d['ts'] ?? 0),
         ];
-        if (!empty($d['stale'])) continue; // Container-Werte eines veralteten Standes nicht als aktuell zeigen
+        if (!empty($d['stale'])) continue; // do not show container values of a stale state as current
         foreach ($d['stats'] ?? [] as $c) {
             // Containername eines Swarm-Tasks: <service>.<slot>.<task-id>
             $nm = $c['Name'] ?? '';
@@ -260,7 +260,7 @@ if ($stats['enabled'] && $swarm['active'] && $swarm['manager']) {
             if (strlen($tid) < 20) continue;
             $mem = $c['MemUsage'] ?? '';
             $approx = false;
-            // Node ohne Speicher-cgroup: Ersatzwert aus der RSS-Summe der Container-Prozesse
+            // node without memory cgroup: fallback value from the RSS sum of the container processes
             if (preg_match('#^0B\s*/\s*0B$#', trim($mem)) && isset($d['rss'][$nm])) {
                 $mem = sprintf('%.2fMiB / %.2fGiB', $d['rss'][$nm] / 1024, (int)($d['memTotal'] ?? 0) / 1048576);
                 $approx = true;
@@ -273,7 +273,7 @@ if ($stats['enabled'] && $swarm['active'] && $swarm['manager']) {
     $stats['tasks'] = (object)$tasksStats;
 }
 
-/* ---------- Lokale Container (für die Host-Spalte in Unraids Tabelle) ---------- */
+/* ---------- Local containers (for the host column in Unraid's table) ---------- */
 $containers = [];
 foreach (jsonLines(dk("ps -a --format '{{json .}}'", 'docker ps')) as $c) {
     $labels = parseLabels($c['Labels'] ?? '');

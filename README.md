@@ -4,7 +4,7 @@ Docker Swarm on the Unraid Docker page. Swarm View is built for a setup where **
 
 ![Swarm Stacks section](docs/swarm-stacks.png)
 
-> **Language:** the user interface is currently German. An English interface is in progress.
+The interface is available in **English** and **German**. It follows Unraid's display language by default; you can also pick a language in the plugin settings.
 
 ## Features
 
@@ -48,6 +48,11 @@ python3 tools/build_plg.py 2026.11.21
 ```
 
 builds `swarm-view.plg` from `src/swarm-view/`, with the matching section of `CHANGES.md` as changelog.
+
+## Translations
+
+All texts in the code are English. Translations live in `src/swarm-view/lang/<code>.json` as `{ "English text": "translation" }` with placeholders `{0}`, `{1}`, …
+`python3 tools/i18n_check.py` lists texts that are missing in a translation file. New languages are welcome as a pull request (add the code to the language select in `SwarmViewSettings.page` and to the `LANGUAGE` check in `include/actions.php`).
 
 ## Support
 

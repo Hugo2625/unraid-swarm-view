@@ -1,13 +1,14 @@
-/* Swarm View – Swarm-Stacks-Leiste: Nodes, Stacks, Services, Aktionen, Editor */
+/* Swarm View – Swarm Stacks section: nodes, stacks, services, actions, editor */
 (function ($) {
   'use strict';
 
   const SV = window.SwarmView;
-  const { esc, isOpen, setOpen, placeBadge, aggregateBadges, replicaSum, replicaClass, statusIcon, findService, nodeCheck, placeSelect, placeService, post, failResult, showResult, confirmBox } = SV;
+  const { t, tn, esc, isOpen, setOpen, placeBadge, aggregateBadges, replicaSum, replicaClass, statusIcon, findService, nodeCheck, placeSelect, placeService, post, failResult, showResult, confirmBox } = SV;
 
-  const LABELS = { deploy: 'Stack Up', update: 'Update Stack', remove: 'Stack Down', restart: 'Neustart', delete: 'Löschen', save: 'Speichern' };
+  const PSEUDO = '(no stack)';   // services that do not belong to a stack (from api.php)
+  const LABELS = { deploy: 'Stack Up', update: 'Update Stack', remove: 'Stack Down', restart: t('Restart'), delete: t('Delete'), save: t('Save') };
 
-  /* ---------- 1) Swarm-Stacks-Leiste ---------- */
+  /* ---------- Message line ---------- */
   function renderMsg() {
     const $m = $('#sv-msg');
     const s = SV.data.swarm;
@@ -15,16 +16,16 @@
       $m.attr('class', 'sv-msg error').html(SV.data.errors.map(esc).join('<br>')).show();
     } else if (!s.active) {
       $m.attr('class', 'sv-msg info')
-        .html('Swarm ist auf diesem Host nicht aktiv. Initialisieren mit <code>docker swarm init --advertise-addr &lt;Unraid-IP&gt;</code>.')
+        .html(esc(t('Swarm is not active on this host. Initialise it with')) + ' <code>docker swarm init --advertise-addr &lt;Unraid-IP&gt;</code>.')
         .show();
     } else if (!s.manager) {
-      $m.attr('class', 'sv-msg info').text('Dieser Host ist nur Worker – Stacks sind nur auf einem Manager sichtbar.').show();
+      $m.attr('class', 'sv-msg info').text(t('This host is only a worker – stacks are only visible on a manager.')).show();
     } else {
       $m.hide();
     }
   }
 
-  /* ---------- Kopfbereich: Zusammenfassung + Node-Karten ---------- */
+  /* ---------- Header: summary + node cards ---------- */
   const bar = (label, pct) => {
     const v = Math.max(0, Math.min(100, Math.round(+pct || 0)));
     const cls = v >= 90 ? 'sv-bar-bad' : v >= 70 ? 'sv-bar-warn' : '';
@@ -33,19 +34,19 @@
 
   function nodeCard(n) {
     const st = (((SV.data.stats || {}).nodes) || {})[n.hostname];
-    const role = n.role === 'manager' ? (n.leader ? 'Manager' : 'Manager (Reserve)') : 'Worker';
+    const role = n.role === 'manager' ? (n.leader ? 'Manager' : t('Manager (reserve)')) : 'Worker';
     const down = n.state !== 'ready';
     const maint = !down && n.availability !== 'active';
     const labels = Object.entries(n.labels || {}).map(([k, v]) => `${k}=${v}`).join(', ');
     const tip = esc(`${n.addr} · ${n.arch} · Docker ${n.engine}${labels ? ' · ' + labels : ''}`);
-    const state = down ? '<span class="sv-bad">nicht erreichbar</span>'
-      : maint ? `<span class="sv-warn">${n.availability === 'drain' ? 'Wartung' : 'pausiert'}</span>` : '<span class="sv-ok">bereit</span>';
+    const state = down ? `<span class="sv-bad">${esc(t('unreachable'))}</span>`
+      : maint ? `<span class="sv-warn">${esc(n.availability === 'drain' ? t('maintenance') : t('paused'))}</span>` : `<span class="sv-ok">${esc(t('ready'))}</span>`;
     const statsOn = (SV.data.stats || {}).enabled;
-    const since = st && st.ts ? new Date(st.ts * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '';
-    const load = !statsOn ? '<div class="sv-card-note sv-dim">Auslastung: CPU/RAM-Agent in den Einstellungen einschalten</div>'
-      : down ? `<div class="sv-card-note sv-bad">Node nicht erreichbar${since ? ` – letzte Werte ${since} Uhr` : ''}</div>`
-        : !st ? '<div class="sv-card-note sv-warn">Agent liefert noch keine Werte (startet nach einem Neustart des Nodes neu)</div>'
-          : st.stale ? `<div class="sv-card-note sv-warn">keine aktuellen Werte${since ? ` – letzte ${since} Uhr` : ''}</div>`
+    const since = st && st.ts ? new Date(st.ts * 1000).toLocaleTimeString(SV.LANG === 'de' ? 'de-DE' : undefined, { hour: '2-digit', minute: '2-digit' }) : '';
+    const load = !statsOn ? `<div class="sv-card-note sv-dim">${esc(t('Load: switch on the CPU/RAM agent in the settings'))}</div>`
+      : down ? `<div class="sv-card-note sv-bad">${esc(since ? t('Node unreachable – last values {0}', since) : t('Node unreachable'))}</div>`
+        : !st ? `<div class="sv-card-note sv-warn">${esc(t('The agent has not reported values yet (it restarts after the node reboots)'))}</div>`
+          : st.stale ? `<div class="sv-card-note sv-warn">${esc(since ? t('no current values – last {0}', since) : t('no current values'))}</div>`
             : bar('CPU', st.cpu) + bar('RAM', st.mem);
     return `<div class="sv-card${down ? ' sv-card-down' : ''}" title="${tip}">
       <div class="sv-card-head"><i class="fa ${n.self ? 'fa-server' : 'fa-external-link'}"></i><b>${esc(n.hostname)}</b>
@@ -57,21 +58,21 @@
     if (!SV.data.nodes.length) { $('#sv-nodes').empty(); return; }
     const services = SV.data.stacks.flatMap((st) => st.services);
     const tasks = services.flatMap((sv) => sv.tasks);
-    const remote = tasks.filter((t) => t.node && !t.local && /^running/i.test(t.current)).length;
+    const remote = tasks.filter((tk) => tk.node && !tk.local && /^running/i.test(tk.current)).length;
     const upd = services.filter((sv) => sv.update).length;
-    const nStacks = SV.data.stacks.filter((st) => st.name !== '(ohne Stack)').length;
-    const parts = [`${nStacks} Stack${nStacks === 1 ? '' : 's'}`, `${services.length} Service${services.length === 1 ? '' : 's'}`,
-      `${remote} Container ausgelagert`];
-    if (upd) parts.push(`<span class="sv-upd">${upd} Update${upd === 1 ? '' : 's'}</span>`);
+    const nStacks = SV.data.stacks.filter((st) => st.name !== PSEUDO).length;
+    const parts = [tn(nStacks, '{0} stack', '{0} stacks'), tn(services.length, '{0} service', '{0} services'),
+      tn(remote, '{0} container on other nodes', '{0} containers on other nodes')].map(esc);
+    if (upd) parts.push(`<span class="sv-upd">${esc(tn(upd, '{0} update', '{0} updates'))}</span>`);
     $('#sv-nodes').html(`<div class="sv-summary">${parts.join(' · ')}</div><div class="sv-cards">${SV.data.nodes.map(nodeCard).join('')}</div>`);
   }
 
-  /* ---------- Update / Rollback / bevorzugter Node ---------- */
+  /* ---------- Update / rollback ---------- */
   function serviceAction(act, svc) {
     const short = (findService(svc) || {}).short || svc;
     const texts = {
-      'svc-update': [`„${short}“ aktualisieren?`, 'Die neueste Image-Version wird geholt und der Service neu ausgerollt.'],
-      'svc-rollback': [`„${short}“ zurücksetzen?`, `Rollback auf ${(findService(svc) || {}).rollbackTo || 'die vorherige Version'} (docker service rollback).`],
+      'svc-update': [t('Update "{0}"?', short), t('The newest image version is pulled and the service is rolled out again.')],
+      'svc-rollback': [t('Roll back "{0}"?', short), t('Rollback to {0} (docker service rollback).', (findService(svc) || {}).rollbackTo || t('the previous version'))],
     };
     confirmBox(texts[act][0], texts[act][1], () => {
       SV.busy = true;
@@ -83,7 +84,7 @@
     });
   }
 
-  /* ---------- Menüs (Unraids Kontextmenü, wie bei den Container-Icons) ---------- */
+  /* ---------- Menus (Unraid's context menu, like the container icons) ---------- */
   function attachMenu(el, opts) {
     if (typeof context === 'undefined' || !el.id) return;
     context.settings({ right: false, above: 'auto' });
@@ -93,55 +94,55 @@
   const item = (text, icon, fn) => ({ text, icon, action: (e) => { e.preventDefault(); fn(); } });
 
   function restartService(sv) {
-    confirmBox(`„${sv.short}“ neu starten?`, 'Der Service wird mit --force neu ausgerollt (alle Replicas).', () => {
+    confirmBox(t('Restart "{0}"?', sv.short), t('The service is rolled out again with --force (all replicas).'), () => {
       post({ action: 'svc-restart', service: sv.name })
-        .done((r) => showResult(`Neustart: ${sv.short}`, r))
-        .fail((x) => showResult(`Neustart: ${sv.short}`, failResult(x)))
+        .done((r) => showResult(t('Restart: {0}', sv.short), r))
+        .fail((x) => showResult(t('Restart: {0}', sv.short), failResult(x)))
         .always(() => { SV.load(); setTimeout(SV.load, 4000); });
     });
   }
 
-  /** ⋮ an einer Service-Zeile */
+  /** ⋮ on a service row */
   SV.serviceMenu = function (el) {
     const sv = findService(String($(el).data('service')));
     if (!sv || SV.busy) return;
     const opts = [];
     if (sv.update) opts.push(item('Update', 'fa-flash', () => serviceAction('svc-update', sv.name)));
-    if (sv.canRollback) opts.push(item(`Rollback auf ${sv.rollbackTo || 'vorherige Version'}`, 'fa-undo', () => serviceAction('svc-rollback', sv.name)));
-    opts.push(item('Neustart', 'fa-refresh', () => restartService(sv)));
+    if (sv.canRollback) opts.push(item(t('Rollback to {0}', sv.rollbackTo || t('previous version')), 'fa-undo', () => serviceAction('svc-rollback', sv.name)));
+    opts.push(item(t('Restart'), 'fa-refresh', () => restartService(sv)));
     if (sv.mode !== 'global' && SV.data.nodes.length > 1) {
-      const on = new Set(sv.tasks.map((t) => t.node));
+      const on = new Set(sv.tasks.map((tk) => tk.node));
       for (const n of SV.data.nodes) {
         if ((on.size === 1 && on.has(n.hostname)) || !nodeCheck(sv, n).ok) continue;
-        opts.push(item(`Auf ${n.hostname} verschieben (fest)`, 'fa-exchange', () => placeService(sv.name, `fixed:${n.hostname}`)));
+        opts.push(item(t('Move to {0} (fixed)', n.hostname), 'fa-exchange', () => placeService(sv.name, `fixed:${n.hostname}`)));
       }
-      if (sv.placeNode || sv.prefer) opts.push(item('Automatisch platzieren', 'fa-random', () => placeService(sv.name, '')));
+      if (sv.placeNode || sv.prefer) opts.push(item(t('Place automatically'), 'fa-random', () => placeService(sv.name, '')));
     }
-    const logTasks = sv.tasks.filter((t) => t.node && t.id);
+    const logTasks = sv.tasks.filter((tk) => tk.node && tk.id);
     if (logTasks.length) {
       opts.push({ divider: true });
-      for (const t of logTasks.slice(0, 6)) {
-        opts.push(item(logTasks.length > 1 ? `Logs (${t.node}${t.slot ? ' #' + t.slot : ''})` : 'Logs', 'fa-navicon',
-          () => SV.openLogs({ taskId: t.id, name: `${sv.name}${t.slot ? '.' + t.slot : ''}`, node: t.node })));
+      for (const tk of logTasks.slice(0, 6)) {
+        opts.push(item(logTasks.length > 1 ? `Logs (${tk.node}${tk.slot ? ' #' + tk.slot : ''})` : 'Logs', 'fa-navicon',
+          () => SV.openLogs({ taskId: tk.id, name: `${sv.name}${tk.slot ? '.' + tk.slot : ''}`, node: tk.node })));
       }
     }
     attachMenu(el, opts);
   };
 
-  /** Zahnrad an einer Stack-Zeile */
+  /** Gear on a stack row */
   SV.stackMenu = function (el) {
     const name = String($(el).data('name'));
     const e = stackList().find((x) => x.name === name);
     if (!e || SV.busy) return;
     const opts = [];
     if (e.managed) {
-      opts.push(item('Bearbeiten', 'fa-wrench', () => openEditor(name)));
-      opts.push(item('Beschreibung', 'fa-pencil', () => editDescription(name)));
+      opts.push(item(t('Edit'), 'fa-wrench', () => openEditor(name)));
+      opts.push(item(t('Description'), 'fa-pencil', () => editDescription(name)));
     }
-    if (e.st) opts.push(item('Neustart', 'fa-refresh', () => stackAction('restart', name)));
+    if (e.st) opts.push(item(t('Restart'), 'fa-refresh', () => stackAction('restart', name)));
     if (e.managed && !e.st) {
       opts.push({ divider: true });
-      opts.push(item('Dateien löschen', 'fa-trash', () => deleteStack(name)));
+      opts.push(item(t('Delete files'), 'fa-trash', () => deleteStack(name)));
     }
     attachMenu(el, opts);
   };
@@ -151,41 +152,41 @@
     const save = (v) => {
       if (v === false || v === null) return;
       post({ action: 'describe', name, description: String(v).trim() })
-        .done((r) => { if (!r.ok) showResult('Beschreibung', r); SV.load(); })
-        .fail((x) => showResult('Beschreibung', failResult(x)));
+        .done((r) => { if (!r.ok) showResult(t('Description'), r); SV.load(); })
+        .fail((x) => showResult(t('Description'), failResult(x)));
     };
     if (typeof swal === 'function') {
       swal({
-        title: `Beschreibung für „${name}“`, text: 'Erscheint unter dem Stack-Namen (leer = keine).', type: 'input',
+        title: t('Description for "{0}"', name), text: t('Shown below the stack name (empty = none).'), type: 'input',
         showCancelButton: true, closeOnConfirm: true, inputValue: cur,
-        confirmButtonText: 'Speichern', cancelButtonText: 'Abbrechen',
+        confirmButtonText: t('Save'), cancelButtonText: t('Cancel'),
       }, (v) => setTimeout(() => save(v), 150));
     } else {
-      save(prompt(`Beschreibung für „${name}“:`, cur));
+      save(prompt(`${t('Description for "{0}"', name)}:`, cur));
     }
   }
 
   function deleteStack(name) {
-    confirmBox(`Stack-Dateien „${name}“ löschen?`, 'docker-stack.yml, .env und Beschreibung werden vom USB-Stick entfernt.', () => {
+    confirmBox(t('Delete the stack files of "{0}"?', name), t('docker-stack.yml, .env and the description are removed from the flash drive.'), () => {
       post({ action: 'delete', name })
-        .done((r) => { if (r.ok) { if (edName === name) closeEditor(); SV.load(); } showResult(`Löschen: ${name}`, r); })
-        .fail((x) => showResult(`Löschen: ${name}`, failResult(x)));
+        .done((r) => { if (r.ok) { if (edName === name) closeEditor(); SV.load(); } showResult(t('Delete: {0}', name), r); })
+        .fail((x) => showResult(t('Delete: {0}', name), failResult(x)));
     });
   }
 
-  /** Deployte + von Swarm View verwaltete Stacks zusammenführen */
+  /** Merge deployed stacks and stacks managed by Swarm View */
   function stackList() {
     const deployed = new Map(SV.data.stacks.map((s) => [s.name, s]));
     const managed = new Set(SV.data.managed || []);
     const names = [...new Set([...deployed.keys(), ...managed])].sort((a, b) =>
-      (a === '(ohne Stack)') - (b === '(ohne Stack)') || a.localeCompare(b));
+      (a === PSEUDO) - (b === PSEUDO) || a.localeCompare(b));
     return names.map((n) => ({ name: n, st: deployed.get(n) || null, managed: managed.has(n) }));
   }
 
   const btn = (act, name, label, enabled = true) =>
-    `<input type="button" class="sv-act" data-act="${act}" data-name="${esc(name)}" value="${label}"${SV.busy || !enabled ? ' disabled' : ''}>`;
+    `<input type="button" class="sv-act" data-act="${act}" data-name="${esc(name)}" value="${esc(label)}"${SV.busy || !enabled ? ' disabled' : ''}>`;
 
-  /** Registry weglassen: "ghcr.io/music-assistant/server:latest" → "music-assistant/server:latest" */
+  /** Drop the registry: "ghcr.io/music-assistant/server:latest" → "music-assistant/server:latest" */
   const shortImage = (img) => {
     let s = String(img || '');
     const parts = s.split('/');
@@ -193,7 +194,7 @@
     s = s.replace(/^library\//, '');
     return s.slice(s.lastIndexOf('/') + 1).includes(':') ? s : `${s}:latest`;
   };
-  // Platzierungsregeln aus der Datei; node.hostname zeigt schon die Auswahl
+  // placement rules from the file; node.hostname is already shown by the select
   const extraConstraints = (sv) => (sv.constraints || []).filter((c) => !/^\s*node\.hostname\s*==/.test(c));
 
   let menuSeq = 0;
@@ -203,36 +204,36 @@
     const m = String(sv.replicas || '').match(/^(\d+)\/(\d+)/);
     const rc = m ? replicaClass(+m[1], +m[2]) : '';
     const cons = extraConstraints(sv);
-    const tip = esc([sv.ports && `Ports: ${sv.ports}`, cons.length && `Regeln: ${cons.join(', ')}`].filter(Boolean).join('\n'));
-    const badges = (sv.update ? ' <span class="sv-badge sv-upd-badge" title="Neuere Image-Version in der Registry – Update über ⋮"><i class="fa fa-flash"></i>Update</span>' : '')
-      + (sv.prefer ? ` <span class="sv-badge sv-label" title="Bevorzugter Node (Label swarm-view.prefer)"><i class="fa fa-star"></i>${esc(sv.prefer)}</span>` : '')
-      + (sv.rebalancing ? ' <span class="sv-badge sv-pending"><i class="fa fa-exchange"></i>kehrt zurück …</span>' : '');
+    const tip = esc([sv.ports && `Ports: ${sv.ports}`, cons.length && t('Rules: {0}', cons.join(', '))].filter(Boolean).join('\n'));
+    const badges = (sv.update ? ` <span class="sv-badge sv-upd-badge" title="${esc(t('Newer image version in the registry – update via ⋮'))}"><i class="fa fa-flash"></i>Update</span>` : '')
+      + (sv.prefer ? ` <span class="sv-badge sv-label" title="${esc(t('Preferred node (label swarm-view.prefer)'))}"><i class="fa fa-star"></i>${esc(sv.prefer)}</span>` : '')
+      + (sv.rebalancing ? ` <span class="sv-badge sv-pending"><i class="fa fa-exchange"></i>${esc(t('returning …'))}</span>` : '');
     const id = `sv-menu-${++menuSeq}`;
     return `<tr class="sv-svc${open ? ' sv-open' : ''}" data-stack="${esc(name)}">
       <td class="sv-svcname"${tip ? ` title="${tip}"` : ''}><b>${esc(sv.short)}</b>${sv.mode === 'global' ? ' <span class="sv-dim">(global)</span>' : ''}${badges}${sv.ports ? `<span class="sv-adv sv-dim sv-mono sv-ports">${esc(sv.ports)}</span>` : ''}</td>
       <td class="${rc}">${esc(sv.replicas)}</td>
       <td class="sv-where"><span class="sv-where-badges">${sv.tasks.length ? sv.tasks.map(placeBadge).join('') : '<span class="sv-dim">–</span>'}</span>${placeSelect(sv)}${cons.length ? `<div class="sv-adv sv-cons">${cons.map(esc).join(' · ')}</div>` : ''}</td>
-      <td class="sv-cmds"><i class="fa fa-ellipsis-v sv-menu" id="${id}" data-service="${esc(sv.name)}" title="Aktionen" onclick="SwarmView.serviceMenu(this)"></i></td>
-      <td class="sv-adv sv-image" title="${esc(sv.image)}"><span class="sv-mono">${esc(shortImage(sv.image))}</span>${sv.update ? ' <i class="fa fa-flash sv-upd" title="Update verfügbar"></i>' : ''}</td>
+      <td class="sv-cmds"><i class="fa fa-ellipsis-v sv-menu" id="${id}" data-service="${esc(sv.name)}" title="${esc(t('Actions'))}" onclick="SwarmView.serviceMenu(this)"></i></td>
+      <td class="sv-adv sv-image" title="${esc(sv.image)}"><span class="sv-mono">${esc(shortImage(sv.image))}</span>${sv.update ? ` <i class="fa fa-flash sv-upd" title="${esc(t('Update available'))}"></i>` : ''}</td>
     </tr>`;
   }
 
   function renderStacks() {
     const $tb = $('#sv-stacks tbody');
     if (document.activeElement && $(document.activeElement).is('#sv-stacks .sv-place')) return;
-    if ($('.dropdown-context:visible').length) return; // offenes Menü nicht unter dem Mauszeiger wegrendern
+    if ($('.dropdown-context:visible').length) return; // do not re-render an open menu away under the mouse
     const swarmOk = SV.data.swarm.active && SV.data.swarm.manager;
     $('#sv-add, #sv-cleanup').prop('disabled', !swarmOk || SV.busy);
     const hl = SV.data.swarm.historyLimit;
     $('#sv-history').html(hl != null && hl > 1
-      ? `Swarm behält bis zu ${hl} Container pro Service – <a href="/Settings/SwarmViewSettings">in den Einstellungen auf 1 stellen</a>` : '');
+      ? `${esc(t('Swarm keeps up to {0} containers per service', hl))} – <a href="/Settings/SwarmViewSettings">${esc(t('set it to 1 in the settings'))}</a>` : '');
     if (!swarmOk) {
-      $tb.html(`<tr class="sv-empty"><td colspan="${COLS}">Keine Swarm-Stacks verfügbar (Swarm nicht aktiv oder kein Manager)</td></tr>`);
+      $tb.html(`<tr class="sv-empty"><td colspan="${COLS}">${esc(t('No Swarm stacks available (Swarm not active or not a manager)'))}</td></tr>`);
       return;
     }
     const list = stackList();
     if (!list.length) {
-      $tb.html(`<tr class="sv-empty"><td colspan="${COLS}">Noch keine Swarm-Stacks – unten mit „Add New Swarm Stack“ anlegen</td></tr>`);
+      $tb.html(`<tr class="sv-empty"><td colspan="${COLS}">${esc(t('No Swarm stacks yet – create one below with "Add New Swarm Stack"'))}</td></tr>`);
       return;
     }
     menuSeq = 0;
@@ -242,15 +243,15 @@
       const tasks = services.flatMap((sv) => sv.tasks);
       const { run, want } = replicaSum(services);
       const open = !!st && isOpen(name);
-      const pseudo = name === '(ohne Stack)';
+      const pseudo = name === PSEUDO;
       const info = (SV.data.stackInfo || {})[name] || {};
 
       const icon = pseudo ? '<i class="fa fa-cubes sv-stackicon"></i>'
-        : `<i class="fa fa-cog sv-gear" id="sv-gear-${++menuSeq}" data-name="${esc(name)}" title="Stack-Aktionen" onclick="SwarmView.stackMenu(this)"></i>`;
-      const status = st ? statusIcon(run, want) : '<i class="fa fa-square red-text" style="margin-left:5px" title="nicht deployt"></i>';
+        : `<i class="fa fa-cog sv-gear" id="sv-gear-${++menuSeq}" data-name="${esc(name)}" title="${esc(t('Stack actions'))}" onclick="SwarmView.stackMenu(this)"></i>`;
+      const status = st ? statusIcon(run, want) : `<i class="fa fa-square red-text" style="margin-left:5px" title="${esc(t('not deployed'))}"></i>`;
       const nUpd = services.filter((sv) => sv.update).length;
       const desc = info.description ? `<div class="sv-desc">${esc(info.description)}</div>`
-        : !managed && !pseudo ? '<div class="sv-desc sv-dim">extern deployt</div>' : '';
+        : !managed && !pseudo ? `<div class="sv-desc sv-dim">${esc(t('deployed externally'))}</div>` : '';
       const path = info.path ? `<div class="sv-path sv-dim sv-mono">${esc(info.path)}</div>` : '';
 
       let cmds = '';
@@ -259,10 +260,10 @@
 
       rows += `<tr class="sv-stack" data-stack="${esc(name)}">
         <td class="sv-stackcell">
-          <i class="fa ${st ? `fa-chevron-${open ? 'down' : 'right'}` : 'fa-fw'} sv-caret"></i>${icon}<span class="sv-stackname">${esc(name)}</span>${status}
+          <i class="fa ${st ? `fa-chevron-${open ? 'down' : 'right'}` : 'fa-fw'} sv-caret"></i>${icon}<span class="sv-stackname">${esc(pseudo ? t(PSEUDO) : name)}</span>${status}
           ${desc}${path}
         </td>
-        <td>${st ? `<span class="${replicaClass(run, want)}">${run}/${want}</span><div class="sv-dim sv-small">${services.length} Service${services.length === 1 ? '' : 's'}${nUpd ? ` · <span class="sv-upd">${nUpd} Update${nUpd === 1 ? '' : 's'}</span>` : ''}</div>` : '<span class="sv-dim">nicht deployt</span>'}</td>
+        <td>${st ? `<span class="${replicaClass(run, want)}">${run}/${want}</span><div class="sv-dim sv-small">${esc(tn(services.length, '{0} service', '{0} services'))}${nUpd ? ` · <span class="sv-upd">${esc(tn(nUpd, '{0} update', '{0} updates'))}</span>` : ''}</div>` : `<span class="sv-dim">${esc(t('not deployed'))}</span>`}</td>
         <td>${st ? aggregateBadges(tasks) : '<span class="sv-dim">–</span>'}</td>
         <td class="sv-cmds">${cmds}</td>
         <td class="sv-adv"></td>
@@ -283,14 +284,14 @@
     $svc.toggleClass('sv-open', open);
   });
 
-  // Ansicht umgeschaltet → Standard für noch nicht angefasste Stacks ändert sich
+  // view switched → the default for stacks not toggled yet changes
   $(document).on('change', 'input.advancedview', () => setTimeout(() => SV.data && renderStacks(), 0));
 
   function runAction(act, name, $button) {
     SV.busy = true;
     $('.sv-act, #sv-editor input').prop('disabled', true);
     const old = $button ? $button.val() : '';
-    if ($button) $button.val('läuft …');
+    if ($button) $button.val(t('running …'));
     const req = act === 'update' ? { action: 'deploy', mode: 'update', name } : { action: act, name };
     post(req)
       .done((r) => showResult(`${LABELS[act]}: ${name}`, r))
@@ -300,18 +301,18 @@
         $('.sv-act, #sv-editor input').prop('disabled', false);
         if ($button) $button.val(old);
         SV.load();
-        // Swarm braucht ein paar Sekunden, bis Tasks laufen
+        // Swarm needs a few seconds until tasks run
         setTimeout(SV.load, 4000);
       });
   }
 
   function stackAction(act, name, $b) {
     if (act === 'remove') {
-      confirmBox(`Stack „${name}“ herunterfahren?`, 'Alle Services des Stacks werden entfernt. Volumes und Daten bleiben erhalten.', () => runAction(act, name, $b));
+      confirmBox(t('Shut down stack "{0}"?', name), t('All services of the stack are removed. Volumes and data are kept.'), () => runAction(act, name, $b));
     } else if (act === 'update') {
-      confirmBox(`Stack „${name}“ aktualisieren?`, 'Swarm prüft für alle Services, ob es neuere Image-Versionen gibt, und rollt diese aus. Services ohne neue Version bleiben unverändert.', () => runAction(act, name, $b));
+      confirmBox(t('Update stack "{0}"?', name), t('Swarm checks all services for newer image versions and rolls them out. Services without a new version stay unchanged.'), () => runAction(act, name, $b));
     } else if (act === 'restart') {
-      confirmBox(`Stack „${name}“ neu starten?`, 'Alle Services werden mit --force neu ausgerollt.', () => runAction(act, name, $b));
+      confirmBox(t('Restart stack "{0}"?', name), t('All services are rolled out again with --force.'), () => runAction(act, name, $b));
     } else {
       runAction(act, name, $b);
     }
@@ -349,14 +350,14 @@
       $('#sv-editor').show()[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
     if (preload) show(preload);
-    else post({ action: 'get', name }).done((r) => (r.ok ? show(r) : showResult('Fehler', r))).fail((x) => showResult('Fehler', failResult(x)));
+    else post({ action: 'get', name }).done((r) => (r.ok ? show(r) : showResult(t('Error'), r))).fail((x) => showResult(t('Error'), failResult(x)));
   }
 
   function closeEditor() { edName = null; $('#sv-editor').hide(); }
 
   function saveEditor() {
     return post({ action: 'save', name: edName, yml: $('#sv-ed-yml').val(), env: $('#sv-ed-env').val() })
-      .done((r) => edLog(r.ok && r.valid, r.ok ? `Gespeichert. ${r.log || ''}` : (r.error || 'Fehler')))
+      .done((r) => edLog(r.ok && r.valid, r.ok ? `${t('Saved.')} ${r.log || ''}` : (r.error || t('Error'))))
       .fail((x) => edLog(false, failResult(x).error));
   }
 
@@ -371,11 +372,11 @@
     const name = edName;
     saveEditor().done((r) => {
       if (r.ok && r.valid) runAction('deploy', name, $(this));
-      else edLog(false, `Nicht deployt – Datei ist ungültig:\n${r.log || r.error || ''}`);
+      else edLog(false, `${t('Not deployed – the file is invalid:')}\n${r.log || r.error || ''}`);
     });
   });
   $(document).on('click', '#sv-ed-delete', () => deleteStack(edName));
-  // Tab-Taste im Editor = 2 Leerzeichen (YAML)
+  // Tab key in the editor = 2 spaces (YAML)
   $(document).on('keydown', '.sv-ed-text', function (e) {
     if (e.key !== 'Tab') return;
     e.preventDefault();
@@ -384,44 +385,45 @@
     this.selectionStart = this.selectionEnd = s + 2;
   });
 
-  /* ---------- Aufräumen ---------- */
+  /* ---------- Cleanup ---------- */
   $(document).on('click', '#sv-cleanup', function () {
     const $b = $(this);
-    confirmBox('Swarm aufräumen?',
-      'Löscht auf allen Nodes gestoppte Swarm-Container und verwaiste Images. Laufende Container bleiben unberührt. Außerdem behält Swarm künftig nur noch den aktuellen Container pro Service.',
+    const label = $b.val();
+    confirmBox(t('Clean up Swarm?'),
+      t('Removes stopped Swarm containers and unused images on all nodes. Running containers are not touched. Swarm also keeps only the current container per service from now on.'),
       () => {
         SV.busy = true;
-        $b.prop('disabled', true).val('räumt auf …');
+        $b.prop('disabled', true).val(t('cleaning up …'));
         post({ action: 'cleanup' })
-          .done((r) => showResult('Aufräumen', r))
-          .fail((x) => showResult('Aufräumen', failResult(x)))
+          .done((r) => showResult(t('Cleanup'), r))
+          .fail((x) => showResult(t('Cleanup'), failResult(x)))
           .always(() => {
             SV.busy = false;
-            $b.prop('disabled', false).val('Aufräumen');
+            $b.prop('disabled', false).val(label);
             SV.load();
             if (typeof window.loadlist === 'function' && !SV.listPending) window.loadlist();
           });
       });
   });
 
-  /* ---------- Neuer Stack ---------- */
+  /* ---------- New stack ---------- */
   function createStack(raw) {
     const name = String(raw || '').trim().toLowerCase();
     if (!name) return;
     post({ action: 'create', name })
-      .done((r) => { if (r.ok) { openEditor(name, r); SV.load(); } else showResult('Neuer Stack', r); })
-      .fail((x) => showResult('Neuer Stack', failResult(x)));
+      .done((r) => { if (r.ok) { openEditor(name, r); SV.load(); } else showResult(t('New stack'), r); })
+      .fail((x) => showResult(t('New stack'), failResult(x)));
   }
 
   $(document).on('click', '#sv-add', () => {
     if (typeof swal === 'function') {
       swal({
-        title: 'Neuer Swarm-Stack', text: 'Name (a-z, 0-9, - und _)', type: 'input',
+        title: t('New Swarm stack'), text: t('Name (a-z, 0-9, - and _)'), type: 'input',
         showCancelButton: true, closeOnConfirm: true, inputPlaceholder: 'stack_name',
-        confirmButtonText: 'Anlegen', cancelButtonText: 'Abbrechen',
+        confirmButtonText: t('Create'), cancelButtonText: t('Cancel'),
       }, (v) => { if (v !== false) setTimeout(() => createStack(v), 150); });
     } else {
-      createStack(prompt('Name des neuen Swarm-Stacks (a-z, 0-9, - und _):'));
+      createStack(prompt(t('Name of the new Swarm stack (a-z, 0-9, - and _):')));
     }
   });
 

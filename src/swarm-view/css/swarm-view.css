@@ -1,6 +1,6 @@
 /* Swarm View */
 
-/* Erweiterte Ansicht: alles mit .sv-adv nur sichtbar, wenn Unraids "Advanced View" an ist */
+/* advanced view: everything with .sv-adv is only visible while Unraid's "Advanced View" is on */
 body:not(.sv-advanced) .sv-adv { display: none !important; }
 
 /* ---------- Swarm-Stacks-Leiste ---------- */
@@ -38,7 +38,7 @@ body:not(.sv-advanced) .sv-adv { display: none !important; }
 #sv-stacks .sv-col-status { width: 130px; }
 #sv-stacks .sv-col-cmds { width: 1%; }
 #sv-stacks td.sv-cmds { text-align: right; }
-/* Service-Zeilen: eine Textzeile */
+/* service rows: one line of text */
 #sv-stacks tr.sv-svc td { padding-top: 3px; padding-bottom: 3px; white-space: nowrap; vertical-align: middle; }
 #sv-stacks tr.sv-svc td:first-child { text-align: left; }
 #sv-stacks td.sv-svcname { max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
@@ -72,13 +72,13 @@ body:not(.sv-advanced) .sv-adv { display: none !important; }
 
 /* ---------- Unraid-Container-Tabelle ---------- */
 #docker_containers td.sv-hostcol { white-space: nowrap; }
-/* Name wie bei lokalen Containern ohne Vorlage: normale Textfarbe; Klick öffnet das Menü */
+/* name like local containers without a template: normal text colour; a click opens the menu */
 #docker_list tr.sv-remote-row .appname a.sv-name { color: inherit; cursor: pointer; text-decoration: none; }
 #docker_list tr.sv-remote-row .appname a.sv-name:hover { text-decoration: underline; }
 #docker_containers td.sv-hostcol .sv-small { font-size: .85em; }
 #docker_list td.updatecolumn .sv-updline:empty { display: none; }
 
-/* Log-Fenster für Pi-Container */
+/* log window for remote containers */
 #sv-logbox { position: fixed; inset: 0; z-index: 10050; background: rgba(0,0,0,.55); padding: 4vh 3vw; box-sizing: border-box; }
 #sv-logbox .sv-logbox-inner { height: 100%; display: flex; flex-direction: column; padding: 12px 14px; border-radius: 6px;
   background: var(--background-color, #1c1b1b); color: var(--text-color, inherit); border: 1px solid rgba(128,128,128,.5); box-sizing: border-box; }
@@ -87,7 +87,7 @@ body:not(.sv-advanced) .sv-adv { display: none !important; }
 #sv-logbox .sv-logbox-head input { margin: 0 0 0 8px; }
 #sv-logbox .sv-log { flex: 1; max-height: none; margin: 0; }
 
-/* ---------- Stack-Verwaltung ---------- */
+/* ---------- Stack management ---------- */
 #sv-stacks .sv-gear { color: #ff8c2f; font-size: 1.5em; margin-right: 8px; vertical-align: middle; cursor: pointer; }
 #sv-stacks .sv-gear:hover { opacity: .75; }
 #sv-stacks td.sv-cmds { white-space: nowrap; }
@@ -141,7 +141,7 @@ body:not(.sv-advanced) .sv-adv { display: none !important; }
 #sv-settings .sv-notify-table input.narrow { width: 64px; }
 #sv-settings blockquote pre { margin: 6px 0; }
 
-/* Anzeigename aus dem Label swarm-view.name: echter Name bleibt im DOM (Folder View braucht ihn), sichtbar ist nur der Anzeigename */
+/* display name from the label swarm-view.name: the real name stays in the DOM (Folder View needs it), only the display name is visible */
 #docker_list .appname[data-sv-alias] { font-size: 0 !important; }
 #docker_list .appname[data-sv-alias] > a { font-size: 0 !important; }
 #docker_list .appname[data-sv-alias]::before { content: attr(data-sv-alias); font-size: var(--sv-fs, 13px); }
@@ -171,7 +171,7 @@ body:not(.sv-advanced) .sv-adv { display: none !important; }
 #sv-settings table.sv-feed { width: auto; border-collapse: collapse; }
 #sv-settings table.sv-feed td { padding: 3px 12px 3px 0; vertical-align: top; }
 
-/* Verwaiste Images ausblenden (Unraid setzt beim Ansichtswechsel display per Inline-Style – deshalb !important) */
+/* hide orphan images (Unraid sets display inline when the view changes – hence !important) */
 #docker_list tr.sv-orphan-hidden { display: none !important; }
 #docker_list tr.sv-orphan-sum td { padding: 6px 10px; }
 #docker_list tr.sv-orphan-sum a { color: inherit; text-decoration: none; }

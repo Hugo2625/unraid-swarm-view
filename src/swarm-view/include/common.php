@@ -1,7 +1,7 @@
 <?php
-/* Swarm View – gemeinsame Helfer für api.php und actions.php */
+/* Swarm View – shared helpers for api.php, actions.php and the pages */
 
-// Über $GLOBALS, weil Unraid .page-Dateien innerhalb einer Funktion rendert
+// via $GLOBALS because Unraid renders .page files inside a function
 $GLOBALS['DOCKER']     = getenv('SV_DOCKER') ?: '/usr/bin/docker';
 $GLOBALS['STACK_ROOT'] = getenv('SV_STACK_ROOT') ?: '/boot/config/plugins/swarm-view/stacks';
 $GLOBALS['STACK_FILE'] = 'docker-stack.yml';
@@ -10,55 +10,57 @@ $GLOBALS['CRON_FILE']  = dirname($GLOBALS['CFG_FILE']) . '/cleanup.cron';
 $GLOBALS['STATE_DIR']  = getenv('SV_STATE') ?: '/tmp/swarm-view';
 $GLOBALS['NOTIFY']     = getenv('SV_NOTIFY') ?: '/usr/local/emhttp/plugins/dynamix/scripts/notify';
 const SV_AGENT = 'swarm-view-agent';
+require_once __DIR__ . '/i18n.php';
 
-/** Aktuelle Zeit (in Tests per SV_NOW überschreibbar) */
+/** Current time (can be overridden with SV_NOW in tests) */
 function sv_now(): int {
     return (int)(getenv('SV_NOW') ?: time());
 }
 
-/** Plugin-Einstellungen mit Standardwerten */
+/** Plugin settings with default values */
 const SV_DEFAULTS = [
+    'LANGUAGE'         => 'auto',    // auto (Unraid's language) | en | de
     'REMOTE_ROWS'      => 'always',  // always | advanced | never
     'HOST_COLUMN'      => 'yes',
-    'SWARM_POSITION'   => 'bottom', // top | middle | bottom – Lage der Swarm-Leiste auf der Docker-Seite
-    'ORPHAN_IMAGES'    => 'swarm', // show | swarm | hide – verwaiste Images in Unraids Liste
-    'FOLDER_LOAD'      => 'total', // total | local – CPU/RAM der Folder-View-Ordner
-    'REFRESH'          => '15',      // Sekunden
+    'SWARM_POSITION'   => 'bottom', // top | middle | bottom – position of the Swarm section on the Docker page
+    'ORPHAN_IMAGES'    => 'swarm', // show | swarm | hide – orphan images in Unraid's list
+    'FOLDER_LOAD'      => 'total', // total | local – CPU/RAM of Folder View folders
+    'REFRESH'          => '15',      // seconds
     'DEPLOY_PRUNE'     => 'yes',
     'CLEANUP_SCHEDULE' => 'off',     // off | daily | weekly
     'CLEANUP_IMAGES'   => 'yes',
 
-    // Update-Hinweise
+    // update hints
     'UPDATE_CHECK'     => 'no',
-    'UPDATE_INTERVAL'  => '12',      // Stunden
+    'UPDATE_INTERVAL'  => '12',      // hours
 
-    // Benachrichtigungen
+    // notifications
     'NOTIFY_ENABLED'       => 'no',
     'NOTIFY_NODE'          => 'yes',
-    'NOTIFY_NODE_DELAY'    => '2',       // Minuten offline, bevor gemeldet wird
+    'NOTIFY_NODE_DELAY'    => '2',       // minutes offline before notifying
     'NOTIFY_NODE_LEVEL'    => 'alert',
     'NOTIFY_CRASH'         => 'yes',
-    'NOTIFY_CRASH_COUNT'   => '3',       // Fehlstarts …
-    'NOTIFY_CRASH_WINDOW'  => '10',      // … innerhalb von Minuten
+    'NOTIFY_CRASH_COUNT'   => '3',       // failed starts …
+    'NOTIFY_CRASH_WINDOW'  => '10',      // … within minutes
     'NOTIFY_CRASH_LEVEL'   => 'warning',
     'NOTIFY_PENDING'       => 'yes',
-    'NOTIFY_PENDING_DELAY' => '5',       // Minuten nicht platzierbar
+    'NOTIFY_PENDING_DELAY' => '5',       // minutes not placeable
     'NOTIFY_PENDING_LEVEL' => 'warning',
-    'NOTIFY_MOVED'         => 'no',      // Service ist auf anderen Node ausgewichen / zurückgekehrt
+    'NOTIFY_MOVED'         => 'no',      // service failed over to another node / returned
     'NOTIFY_MOVED_LEVEL'   => 'normal',
     'NOTIFY_UPDATES'       => 'yes',
     'NOTIFY_UPDATES_LEVEL' => 'normal',
-    'NOTIFY_RECOVERY'      => 'yes',     // Entwarnung, wenn ein Problem behoben ist
-    'NOTIFY_REPEAT'        => '0',       // Stunden bis zur Erinnerung (0 = nie)
-    'NOTIFY_IGNORE'        => '',        // Regex für Service-Namen, die ignoriert werden
+    'NOTIFY_RECOVERY'      => 'yes',     // all-clear when a problem is resolved
+    'NOTIFY_REPEAT'        => '0',       // hours until a reminder (0 = never)
+    'NOTIFY_IGNORE'        => '',        // regex for service names to ignore
 
-    // Bevorzugter Node
+    // preferred node
     'REBALANCE'        => 'no',
-    'REBALANCE_DELAY'  => '5',       // Minuten, die der bevorzugte Node stabil sein muss
+    'REBALANCE_DELAY'  => '5',       // minutes the preferred node must be stable
 
-    // CPU/RAM-Agent
+    // CPU/RAM agent
     'STATS'            => 'no',
-    'STATS_INTERVAL'   => '10',      // Sekunden
+    'STATS_INTERVAL'   => '10',      // seconds
 ];
 
 function sv_cfg(): array {
@@ -80,10 +82,10 @@ function sv_cfg_write(array $cfg): bool {
 }
 
 /**
- * Lage der Swarm-Leiste auf der Docker-Seite. SwarmView.page liest ihren Menu-Rang per
+ * Position of the Swarm section on the Docker page. SwarmView.page reads its menu rank via
  *   Menu="/boot/config/plugins/swarm-view/menu.cfg MENU=Docker:3"
- * aus dieser Datei (Unraids PageBuilder: get_file_key). Sortiert wird natürlich nach "<Rang><Seitenname>":
- *   Docker:0 → vor "1DockerContainers" · Docker:1 → nach "1DockerContainers" ("S" > "D"), vor Compose (Rang 2) · Docker:3 → ans Ende
+ * from this file (Unraid's PageBuilder: get_file_key). Pages are sorted naturally by "<rank><page name>":
+ *   Docker:0 → before "1DockerContainers" · Docker:1 → after "1DockerContainers" ("S" > "D"), before Compose (rank 2) · Docker:3 → at the end
  */
 function sv_menu_write(string $pos): void {
     global $CFG_FILE;
@@ -91,12 +93,12 @@ function sv_menu_write(string $pos): void {
     @file_put_contents(dirname($CFG_FILE) . '/menu.cfg', "MENU=\"Docker:$rank\"\n");
 }
 
-/** Gültiger Stack-Name? (wird auch als Ordnername und Service-Präfix benutzt) */
+/** Valid stack name? (also used as folder name and service prefix) */
 function sv_valid_name(string $n): bool {
     return (bool)preg_match('/^[a-z0-9][a-z0-9_-]{0,62}$/', $n);
 }
 
-/** Namen aller von Swarm View verwalteten Stacks (Ordner mit docker-stack.yml) */
+/** Names of all stacks managed by Swarm View (folders with docker-stack.yml) */
 function sv_managed_stacks(): array {
     global $STACK_ROOT, $STACK_FILE;
     $out = [];
@@ -108,7 +110,7 @@ function sv_managed_stacks(): array {
     return $out;
 }
 
-/** .env (KEY=VALUE) parsen – Kommentare, "export ", Anführungszeichen werden behandelt */
+/** Parse .env (KEY=VALUE) – handles comments, "export " and quotes */
 function sv_parse_env(string $file): array {
     $env = [];
     if (!is_file($file)) return $env;
@@ -127,13 +129,13 @@ function sv_parse_env(string $file): array {
 }
 
 /**
- * Befehl ohne Shell ausführen (Array-Form → kein Quoting-Problem).
+ * Run a command without a shell (array form → no quoting problems).
  * @return array [returncode, kombinierte Ausgabe]
  */
 function sv_run(array $cmd, ?string $cwd = null, array $extraEnv = [], int $timeout = 120): array {
     $env = array_merge(getenv(), $extraEnv);
     $p = proc_open($cmd, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['redirect', 1]], $pipes, $cwd, $env);
-    if (!is_resource($p)) return [127, 'Konnte Befehl nicht starten: ' . implode(' ', $cmd)];
+    if (!is_resource($p)) return [127, sv_t('Could not start command: {0}', implode(' ', $cmd))];
     fclose($pipes[0]);
     stream_set_blocking($pipes[1], false);
     $out = '';
@@ -152,14 +154,14 @@ function sv_run(array $cmd, ?string $cwd = null, array $extraEnv = [], int $time
     return [$rc, trim($out)];
 }
 
-/* ---------- Node-Auswahl (nur Laufzeit, bis zum nächsten Stack Up) ---------- */
+/* ---------- Node selection (runtime only, until the next Stack Up) ---------- */
 
-/** Constraints, die einen Service an einen Node binden (hostname/role/id) */
+/** Constraints that bind a service to a node (hostname/role/id) */
 function sv_is_node_constraint(string $c): bool {
     return (bool)preg_match('/^\s*node\.(hostname|role|id)\s*(==|!=)/', $c);
 }
 
-/** Node aus einer hostname-Constraint ("node.hostname == X" in beliebiger Schreibweise) */
+/** Node from a hostname constraint ("node.hostname == X" in any spelling) */
 function sv_constraint_node(array $cons): string {
     foreach ($cons as $c) {
         if (preg_match('/^\s*node\.hostname\s*==\s*(\S+)\s*$/', $c, $m)) return $m[1];
@@ -167,17 +169,17 @@ function sv_constraint_node(array $cons): string {
     return '';
 }
 
-/* ---------- Aufräumen (Button, Einstellungen und Cron) ---------- */
+/* ---------- Cleanup (button, settings and cron) ---------- */
 
 /**
- * Startet auf jedem Node einen Einmal-Job, der gestoppte Swarm-Container
- * (und optional verwaiste Images) löscht. Wartet max. $wait Sekunden.
+ * Starts a one-off job on every node that deletes stopped Swarm containers
+ * (and optionally unused images). Waits at most $wait seconds.
  * @return array [ok, log]
  */
 function sv_cleanup(bool $images, int $wait = 40): array {
     global $DOCKER;
     $job = 'swarm-view-cleanup';
-    sv_run([$DOCKER, 'service', 'rm', $job]);   // Reste eines früheren Laufs
+    sv_run([$DOCKER, 'service', 'rm', $job]);   // leftovers of an earlier run
     sleep(1);
     $cmd = 'echo "== $(hostname)"; docker container prune -f --filter label=com.docker.swarm.service.id';
     if ($images) $cmd .= '; docker image prune -f';
@@ -187,7 +189,7 @@ function sv_cleanup(bool $images, int $wait = 40): array {
         '--label', 'swarm-view.cleanup=1', '--hostname', '{{.Node.Hostname}}',
         'docker:cli', 'sh', '-c', $cmd,
     ], null, [], 60);
-    if ($rc !== 0) return [false, "Aufräum-Job konnte nicht gestartet werden:\n$out"];
+    if ($rc !== 0) return [false, sv_t('Cleanup job could not be started:') . "\n$out"];
 
     $done = false;
     for ($i = 0; $i < max(1, intdiv($wait, 2)) && !$done; $i++) {
@@ -199,12 +201,12 @@ function sv_cleanup(bool $images, int $wait = 40): array {
     [, $jl] = sv_run([$DOCKER, 'service', 'logs', '--no-task-ids', '--raw', $job], null, [], 20);
     if ($done) {
         sv_run([$DOCKER, 'service', 'rm', $job]);
-        return [true, "Aufräum-Job auf allen Nodes fertig:\n\n" . trim($jl)];
+        return [true, sv_t('Cleanup job finished on all nodes:') . "\n\n" . trim($jl)];
     }
-    return [true, "Aufräum-Job läuft noch (z. B. Image-Download auf dem Pi) – er wird beim nächsten Aufräumen entfernt. Bisherige Ausgabe:\n\n" . trim($jl)];
+    return [true, sv_t('The cleanup job is still running (e.g. an image download on a slow node) – it is removed at the next cleanup. Output so far:') . "\n\n" . trim($jl)];
 }
 
-/** Cron-Datei schreiben: Aufräumen nach Zeitplan + Wächter jede Minute (wenn eine Wächter-Funktion aktiv ist) */
+/** Write the cron file: scheduled cleanup + watchdog every minute (if a watchdog feature is on) */
 function sv_cron_apply(array $cfg): string {
     global $CRON_FILE;
     $lines = ['# Swarm View'];
@@ -212,13 +214,13 @@ function sv_cron_apply(array $cfg): string {
     $when = ['daily' => '17 4 * * *', 'weekly' => '17 4 * * 0'][$cfg['CLEANUP_SCHEDULE']] ?? '';
     if ($when) {
         $lines[] = "$when /usr/bin/php -q /usr/local/emhttp/plugins/swarm-view/scripts/cleanup.php > /dev/null 2>&1";
-        $msg[] = "Automatisches Aufräumen: {$cfg['CLEANUP_SCHEDULE']} (04:17)";
+        $msg[] = sv_t('Automatic cleanup: {0} (04:17)', sv_t($cfg['CLEANUP_SCHEDULE']));
     } else {
-        $msg[] = 'Automatisches Aufräumen: aus';
+        $msg[] = sv_t('Automatic cleanup: off');
     }
     if (sv_monitor_needed($cfg)) {
         $lines[] = "* * * * * /usr/bin/php -q /usr/local/emhttp/plugins/swarm-view/scripts/monitor.php > /dev/null 2>&1";
-        $msg[] = 'Hintergrund-Wächter: aktiv (jede Minute)';
+        $msg[] = sv_t('Background watchdog: active (every minute)');
     }
     if (count($lines) > 1) file_put_contents($CRON_FILE, implode("\n", $lines) . "\n"); else @unlink($CRON_FILE);
     if (is_executable('/usr/local/sbin/update_cron')) exec('/usr/local/sbin/update_cron');
@@ -257,9 +259,9 @@ function sv_notify(string $subject, string $desc, string $level = 'normal', stri
     return $rc === 0;
 }
 
-/* ---------- CPU/RAM-Agent (globaler Service, Ausgabe über service logs) ---------- */
+/* ---------- CPU/RAM agent (global service, output via service logs) ---------- */
 
-/** Shell-Schleife des Agents: Node-CPU/RAM aus /proc + docker stats, eine JSON-Zeile pro Durchlauf */
+/** The agent's shell loop: node CPU/RAM from /proc + docker stats, one JSON line per round */
 function sv_agent_script(): string {
     return <<<'SH'
 ptot=""; pidle=""
@@ -271,7 +273,7 @@ while true; do
   ptot=$tot; pidle=$idle
   mt=$(awk '/^MemTotal:/{print $2}' /proc/meminfo); ma=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
   st=$(docker stats --no-stream --format '{{json .}}' 2>/dev/null | paste -sd, -)
-  # Ohne Speicher-cgroup (Raspberry Pi) meldet docker stats "0B / 0B" – dann RSS der Prozesse je Container zählen (KiB)
+  # without memory cgroup (Raspberry Pi) docker stats reports "0B / 0B" – then sum the processes' RSS per container (KiB)
   rss=""
   case "$st" in *'"MemUsage":"0B / 0B"'*)
     for n in $(docker ps --format '{{.Names}}'); do
@@ -285,10 +287,11 @@ done
 SH;
 }
 
-/** Agent je nach Einstellung anlegen, aktualisieren oder entfernen */
-const SV_AGENT_VERSION = '2'; // bei Änderungen am Agent-Skript erhöhen → Agent wird neu angelegt
+/** Create, update or remove the agent according to the settings */
+const SV_AGENT_VERSION = '2'; // increase when the agent script changes → the agent is recreated
 
-function sv_agent_apply(array $cfg): string {
+function sv_agent_apply(array $cfg, ?bool &$changed = null): string {
+    $changed = false;
     global $DOCKER;
     $want = $cfg['STATS'] === 'yes';
     $interval = (string)max(5, min(300, (int)$cfg['STATS_INTERVAL']));
@@ -296,9 +299,10 @@ function sv_agent_apply(array $cfg): string {
     $exists = $rc === 0;
     if (!$want) {
         if ($exists) sv_run([$DOCKER, 'service', 'rm', SV_AGENT]);
-        return 'CPU/RAM-Agent: aus';
+        $changed = $exists;
+        return sv_t('CPU/RAM agent: off');
     }
-    if ($exists && trim($out) === "$interval/" . SV_AGENT_VERSION) return "CPU/RAM-Agent: aktiv (alle {$interval} s)";
+    if ($exists && trim($out) === "$interval/" . SV_AGENT_VERSION) return sv_t('CPU/RAM agent: active (every {0} s)', $interval);
     if ($exists) sv_run([$DOCKER, 'service', 'rm', SV_AGENT]);
     [$rc, $out] = sv_run([
         $DOCKER, 'service', 'create', '--detach', '--name', SV_AGENT, '--mode', 'global',
@@ -310,14 +314,15 @@ function sv_agent_apply(array $cfg): string {
         '--limit-memory', '64M', '--restart-condition', 'any',
         'docker:cli', 'sh', '-c', sv_agent_script(),
     ], null, [], 60);
-    return $rc === 0 ? "CPU/RAM-Agent: gestartet (alle {$interval} s)" : "CPU/RAM-Agent konnte nicht gestartet werden:\n$out";
+    $changed = true;
+    return $rc === 0 ? sv_t('CPU/RAM agent: started (every {0} s)', $interval) : sv_t('CPU/RAM agent could not be started:') . "\n$out";
 }
 
-/** Letzte Messwerte aller Nodes aus den Agent-Logs */
+/** Latest values of all nodes from the agent's logs */
 function sv_agent_read(int $interval): array {
     global $DOCKER;
-    // Ist ein Node nicht erreichbar, endet "service logs" mit Fehler – die Zeilen der übrigen Nodes stehen trotzdem in der Ausgabe.
-    // Deshalb den Rückgabewert ignorieren und alles auswerten, was als JSON lesbar ist.
+    // if a node is unreachable, "service logs" ends with an error – the lines of the other nodes are still in the output.
+    // so ignore the return code and evaluate everything that parses as JSON.
     [, $out] = sv_run([$DOCKER, 'service', 'logs', '--raw', '--tail', '1', SV_AGENT], null, [], 15);
     $nodes = [];
     foreach (explode("\n", $out) as $line) {
@@ -326,7 +331,7 @@ function sv_agent_read(int $interval): array {
         if (isset($nodes[$d['node']]) && $nodes[$d['node']]['ts'] >= ($d['ts'] ?? 0)) continue;
         $nodes[$d['node']] = $d;
     }
-    // Letzte bekannte Werte je Node merken: fehlt ein Node (aus, neu gestartet), bleiben seine Werte als „veraltet“ sichtbar
+    // remember the last known values per node: if a node is missing (off, rebooting) its values stay visible as "stale"
     $cache = sv_state_read('agent');
     foreach ($nodes as $n => $d) $cache[$n] = $d;
     foreach ($cache as $n => $d) if (time() - (int)($d['ts'] ?? 0) > 86400) unset($cache[$n]);
@@ -336,7 +341,7 @@ function sv_agent_read(int $interval): array {
     return $cache;
 }
 
-/** Swarm-Cluster-Werte aus docker info */
+/** Swarm cluster values from docker info */
 function sv_swarm_settings(): array {
     global $DOCKER;
     [$rc, $out] = sv_run([$DOCKER, 'info', '--format', '{{json .Swarm}}']);
@@ -350,7 +355,7 @@ function sv_swarm_settings(): array {
     ];
 }
 
-/** "repo:tag@sha256:abcd…" → "tag (abcd1234)" – kurze Versionsangabe für Rollback-Beschriftungen */
+/** "repo:tag@sha256:abcd…" → "tag (abcd1234)" – short version for rollback labels */
 function sv_short_ref(string $img): string {
     $dg = '';
     if (($p = strpos($img, '@')) !== false) { $dg = substr($img, $p + 1); $img = substr($img, 0, $p); }
