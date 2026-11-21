@@ -26,8 +26,8 @@ jobs:
       matrix:
         workers: ${{ fromJSON(github.event_name == 'pull_request' && '[1]' || '[1, 2, 3]') }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Install Playwright
@@ -50,7 +50,7 @@ jobs:
           [ -n "$r" ] && { sed -n '1,3p' "$r"; grep -E '^## ❌' "$r" || true; } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload report and screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ui-report-${{ matrix.workers }}-worker
           path: |

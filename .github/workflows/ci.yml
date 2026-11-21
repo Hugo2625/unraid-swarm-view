@@ -12,7 +12,7 @@ jobs:
     name: Syntax, translations, plg, version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       # version check: pull requests against their target branch, pushes to main against the previous state of main
@@ -33,6 +33,6 @@ jobs:
     name: Backend (api.php / actions.php, fake docker CLI)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Backend tests
         run: python3 tests/bench/backend/test_backend.py
