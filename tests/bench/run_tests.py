@@ -10,6 +10,9 @@ OUT = os.path.join(HERE, 'out')
 BASE = os.environ.get('SVTB_URL', 'http://127.0.0.1:8090')
 CHECKS = open(os.path.join(HERE, 'checks.js')).read()
 NOISE = ('graphql', 'favicon')
+# console messages caused by Unraid's own code, not by the plugins under test:
+# newer Chromium blocks unload handlers (dynamix.js: jQuery/Sizzle, NchanSubscriber) and logs every attempt
+CONSOLE_NOISE = ('Permissions policy violation: unload is not allowed',)
 
 ap = argparse.ArgumentParser()
 ap.add_argument('scenarios', nargs='*')
@@ -70,7 +73,8 @@ with sync_playwright() as p:
         ctx = browser.new_context(viewport={'width': w, 'height': h})
         page = ctx.new_page()
         console, http = [], []
-        page.on('console', lambda m: console.append(f'{m.type}: {m.text}') if m.type == 'error' and 'Failed to load resource' not in m.text else None)
+        page.on('console', lambda m: console.append(f'{m.type}: {m.text}') if m.type == 'error' and 'Failed to load resource' not in m.text
+                and not any(n in m.text for n in CONSOLE_NOISE) else None)
         page.on('pageerror', lambda e: console.append(f'pageerror: {e}'))
         page.on('response', lambda r: http.append(f'{r.status} {r.url.replace(BASE, "")}') if r.status >= 400 and not any(n in r.url for n in NOISE) else None)
         t0 = time.time()
