@@ -1,0 +1,3649 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+<!ENTITY name      "swarm-view">
+<!ENTITY author    "Hugo2652">
+<!ENTITY version   "2026.11.21">
+<!ENTITY github    "Hugo2652/unraid-swarm-view">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/&github;/main/&name;.plg">
+<!ENTITY support   "">
+<!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
+]>
+<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" min="7.0.0" icon="cubes">
+
+<CHANGES>
+###2026.11.21
+- First public release
+- Swarm Stacks section on the Docker page: create, edit and deploy stacks (Stack Up / Update Stack / Stack Down), per-service actions (update, rollback, restart, logs, move)
+- Host column and rows for containers running on other nodes, with CPU/RAM, network, uptime and context menu; Folder View support (folder totals across nodes, regex on display names)
+- Node placement per service at runtime: automatic, preferred (with failover and automatic return) or fixed
+- Notifications (node offline, crash loops, pending tasks, node changes, image updates), update hints with rollback, cleanup of stopped task containers and old images
+- Settings with tabs: general, nodes (with warnings), watchdog, maintenance, status
+</CHANGES>
+
+<!-- Remove an older version first (the installer skips files that already exist) -->
+<FILE Run="/bin/bash">
+<INLINE>
+rm -rf &plugdir;
+</INLINE>
+</FILE>
+
+<FILE Name="&plugdir;/SwarmView.page">
+<INLINE><![CDATA[Menu="/boot/config/plugins/swarm-view/menu.cfg MENU=Docker:3"
+Title="Swarm Stacks"
+Tag="cubes"
+Markdown="false"
+Cond="is_file('/var/run/dockerd.pid')"
+---
+<?php
+/* Swarm View – Swarm-Stacks als eigene Leiste auf der Docker-Seite (wie Compose Manager)
+ * und Host-Spalte in Unraids Container-Tabelle (nur in der erweiterten Ansicht). */
+$sv_base = '/plugins/swarm-view';
+?>
+<link type="text/css" rel="stylesheet" href="<?autov("$sv_base/css/swarm-view.css")?>">
+
+<div id="sv-root">
+  <div id="sv-nodes" class="sv-nodes"></div>
+  <div id="sv-msg" class="sv-msg" style="display:none"></div>
+
+  <div id="sv-editor" style="display:none">
+    <div class="sv-ed-head">
+      <i class="fa fa-cubes sv-stackicon"></i><span class="sv-stackname" id="sv-ed-name"></span>
+      <span class="sv-dim sv-mono" id="sv-ed-path"></span>
+    </div>
+    <div class="sv-ed-tabs">
+      <a href="#" data-file="yml" class="sv-ed-tab active">docker-stack.yml</a>
+      <a href="#" data-file="env" class="sv-ed-tab">.env</a>
+    </div>
+    <textarea id="sv-ed-yml" class="sv-ed-text" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+    <textarea id="sv-ed-env" class="sv-ed-text" spellcheck="false" autocapitalize="off" autocomplete="off" style="display:none"></textarea>
+    <pre id="sv-ed-log" class="sv-log" style="display:none"></pre>
+    <div class="sv-ed-buttons">
+      <input type="button" id="sv-ed-save" value="Speichern">
+      <input type="button" id="sv-ed-deploy" value="Speichern &amp; Stack Up">
+      <input type="button" id="sv-ed-close" value="Schließen">
+      <input type="button" id="sv-ed-delete" value="Stack-Dateien löschen" class="sv-right">
+    </div>
+  </div>
+
+  <table class="tablesorter shift" id="sv-stacks">
+    <thead><tr>
+      <th style="text-align:left">Stack</th>
+      <th class="sv-col-status">Status</th>
+      <th class="sv-col-where">Läuft auf</th>
+      <th class="sv-col-cmds">Befehle</th>
+      <th class="sv-adv sv-col-image">Image</th>
+    </tr></thead>
+    <tbody><tr class="sv-empty"><td colspan="5">Lade …</td></tr></tbody>
+  </table>
+  <div class="sv-bottom">
+    <input type="button" id="sv-add" value="Add New Swarm Stack">
+    <input type="button" id="sv-cleanup" value="Aufräumen" title="Gestoppte Swarm-Container und verwaiste Images auf allen Nodes löschen">
+    <span id="sv-history" class="sv-dim"></span>
+  </div>
+</div>
+
+<script src="<?autov("$sv_base/js/common.js")?>"></script>
+<script src="<?autov("$sv_base/js/stacks.js")?>"></script>
+<script src="<?autov("$sv_base/js/containers.js")?>"></script>
+]]></INLINE>
+</FILE>
+<FILE Name="&plugdir;/SwarmViewSettings.page">
+<INLINE><![CDATA[Menu="Utilities"
+Title="Swarm View"
+Icon="cubes"
+Tag="cubes"
+Markdown="false"
+---
+<?php
+/* Swarm View – Einstellungen */
+require_once '/usr/local/emhttp/plugins/swarm-view/include/common.php';
+$sv_cfg = sv_cfg();
+$sv_sw  = sv_swarm_settings();
+$sv_nodes = [];
+if ($sv_sw['active'] && $sv_sw['manager']) {
+    [$rc, $out] = sv_run([$GLOBALS['DOCKER'], 'node', 'ls', '--format', '{{json .}}']);
+    foreach (explode("\n", $rc === 0 ? $out : '') as $l) {
+        $n = json_decode(trim($l), true);
+        if (is_array($n)) $sv_nodes[] = $n;
+    }
+}
+$sv_opt = fn($cur, $val, $label) => '<option value="' . htmlspecialchars($val) . '"' . ((string)$cur === (string)$val ? ' selected' : '') . '>' . htmlspecialchars($label) . '</option>';
+$sv_swarm_ok = $sv_sw['active'] && $sv_sw['manager'];
+$sv_yn  = fn($k) => $sv_opt($sv_cfg[$k], 'yes', 'Ja') . $sv_opt($sv_cfg[$k], 'no', 'Nein');
+$sv_on  = fn($k) => $sv_opt($sv_cfg[$k], 'no', 'Aus') . $sv_opt($sv_cfg[$k], 'yes', 'Ein');
+$sv_lvl = fn($k) => '<select id="' . $k . '" class="sv-lvl">' . $sv_opt($sv_cfg[$k], 'normal', 'Hinweis') . $sv_opt($sv_cfg[$k], 'warning', 'Warnung') . $sv_opt($sv_cfg[$k], 'alert', 'Alarm') . '</select>';
+$sv_num = fn($k, $min, $max) => '<input type="number" id="' . $k . '" min="' . $min . '" max="' . $max . '" value="' . htmlspecialchars($sv_cfg[$k]) . '" class="narrow">';
+$sv_upd = sv_state_read('updates');
+$sv_upd_when = !empty($sv_upd['checked']) ? date('d.m.Y H:i', (int)$sv_upd['checked']) : 'noch nie';
+$sv_upd_count = count(array_filter($sv_upd['services'] ?? [], fn($x) => !empty($x['update'])));
+
+// ---------- Daten für die Tabs Nodes, Wächter, Status ----------
+$sv_ago = function ($ts) {
+    if (!$ts) return 'noch nie';
+    $d = max(0, time() - (int)$ts);
+    if ($d < 60) return "vor $d s";
+    if ($d < 3600) return 'vor ' . intdiv($d, 60) . ' Min.';
+    if ($d < 86400) return 'vor ' . intdiv($d, 3600) . ' Std.';
+    return date('d.m.Y H:i', (int)$ts);
+};
+$sv_ninfo = [];      // Hostname → Details aus node inspect
+$sv_prefer = [];     // Services mit Vorzug: Name → Node
+if ($sv_swarm_ok && $sv_nodes) {
+    [$rc, $out] = sv_run(array_merge([$GLOBALS['DOCKER'], 'node', 'inspect'], array_map(fn($n) => $n['ID'], $sv_nodes)));
+    foreach ($rc === 0 ? (json_decode($out, true) ?: []) : [] as $ni) {
+        $sv_ninfo[$ni['Description']['Hostname'] ?? ''] = [
+            'addr'   => $ni['Status']['Addr'] ?? '',
+            'arch'   => $ni['Description']['Platform']['Architecture'] ?? '',
+            'os'     => $ni['Description']['Platform']['OS'] ?? '',
+            'engine' => $ni['Description']['Engine']['EngineVersion'] ?? '',
+            'cpus'   => round(($ni['Description']['Resources']['NanoCPUs'] ?? 0) / 1e9),
+            'memGB'  => round(($ni['Description']['Resources']['MemoryBytes'] ?? 0) / 1073741824, 1),
+            'labels' => $ni['Spec']['Labels'] ?? [],
+        ];
+    }
+    [$rc, $out] = sv_run([$GLOBALS['DOCKER'], 'service', 'ls', '--filter', 'label=swarm-view.prefer', '--format', '{{.Name}}']);
+    $pnames = $rc === 0 ? array_filter(explode("\n", trim($out))) : [];
+    if ($pnames) {
+        [$rc, $out] = sv_run(array_merge([$GLOBALS['DOCKER'], 'service', 'inspect', '--format', '{{.Spec.Name}}={{index .Spec.Labels "swarm-view.prefer"}}'], $pnames));
+        foreach (explode("\n", $rc === 0 ? trim($out) : '') as $l) if (strpos($l, '=') !== false) { [$k, $v] = explode('=', $l, 2); $sv_prefer[$k] = $v; }
+    }
+}
+$sv_agent = ($sv_cfg['STATS'] === 'yes' && $sv_swarm_ok) ? sv_agent_read((int)$sv_cfg['STATS_INTERVAL']) : [];
+$sv_mon = sv_state_read('monitor');
+$sv_self_engine = '';
+foreach ($sv_nodes as $n) if (!empty($n['Self'])) $sv_self_engine = $sv_ninfo[$n['Hostname'] ?? '']['engine'] ?? '';
+
+/** Hinweise zu einem Node: [Stufe, Text] */
+$sv_warn = function (array $n) use ($sv_ninfo, $sv_agent, $sv_cfg, $sv_self_engine, $sv_ago) {
+    $h = $n['Hostname'] ?? '';
+    $i = $sv_ninfo[$h] ?? [];
+    $w = [];
+    if (strtolower($n['Status'] ?? '') !== 'ready') $w[] = ['bad', 'Node ist nicht erreichbar – Swarm verlegt seine Container auf andere Nodes.'];
+    if (strtolower($n['Availability'] ?? 'active') !== 'active') $w[] = ['warn', 'Node ist ' . (strtolower($n['Availability']) === 'drain' ? 'in Wartung' : 'pausiert') . ' – Swarm startet dort keine neuen Container.'];
+    if ($sv_self_engine && ($i['engine'] ?? '') && $i['engine'] !== $sv_self_engine)
+        $w[] = ['warn', "Andere Docker-Version als der Manager ({$i['engine']} statt $sv_self_engine). Gemischte Versionen funktionieren meist, sind aber eine häufige Fehlerquelle."];
+    if ($sv_cfg['STATS'] === 'yes') {
+        $a = $sv_agent[$h] ?? null;
+        if (!$a) $w[] = ['warn', 'Der CPU/RAM-Agent hat sich noch nicht gemeldet.'];
+        else {
+            if (!empty($a['stale'])) $w[] = ['warn', 'Der CPU/RAM-Agent meldet keine aktuellen Werte (zuletzt ' . $sv_ago($a['ts'] ?? 0) . ').'];
+            $noMem = !empty($a['rss']);
+            foreach ($a['stats'] ?? [] as $c) if (preg_match('#^0B\s*/\s*0B$#', trim($c['MemUsage'] ?? ''))) $noMem = true;
+            if ($noMem) $w[] = ['warn', 'Docker misst hier keinen Container-Speicher (Speicher-cgroup aus). RAM-Werte der Container sind deshalb geschätzt. Abhilfe auf Raspberry Pi OS: <code>cgroup_enable=memory cgroup_memory=1</code> ans Ende der Zeile in <code>/boot/firmware/cmdline.txt</code>, dann neu starten.'];
+            if (($a['ts'] ?? 0) > time() + 5) $w[] = ['warn', 'Die Uhr dieses Nodes geht vor (' . ((int)$a['ts'] - time()) . ' s). Zeitangaben und Swarm-Zertifikate können darunter leiden – NTP prüfen.'];
+        }
+    }
+    return $w;
+};
+?>
+<link type="text/css" rel="stylesheet" href="<?autov('/plugins/swarm-view/css/swarm-view.css')?>">
+
+<div id="sv-settings">
+<div class="sv-tabbar"><a href="#" class="sv-tabbtn" data-tab="general"><i class="fa fa-sliders"></i> Allgemein</a><a href="#" class="sv-tabbtn" data-tab="nodes"><i class="fa fa-server"></i> Nodes<?php $sv_nw = array_sum(array_map(fn($n) => count($sv_warn($n)), $sv_nodes)); if ($sv_nw):?> <span class="sv-tabbadge"><?=$sv_nw?></span><?endif;?></a><a href="#" class="sv-tabbtn" data-tab="watch"><i class="fa fa-bell"></i> Wächter</a><a href="#" class="sv-tabbtn" data-tab="maint"><i class="fa fa-wrench"></i> Wartung</a><a href="#" class="sv-tabbtn" data-tab="status"><i class="fa fa-heartbeat"></i> Status</a></div>
+
+<div class="sv-tab" data-tab="general">
+<div class="sv-set-title"><i class="fa fa-sitemap"></i> Swarm-Cluster</div>
+<?if (!$sv_swarm_ok):?>
+<p class="sv-dim">Swarm ist auf diesem Server nicht aktiv oder er ist kein Manager – Cluster-Einstellungen und Nodes sind nicht verfügbar.</p>
+<?else:?>
+<dl>
+  <dt>Container pro Service behalten:</dt>
+  <dd><input type="number" id="HISTORY_LIMIT" min="1" max="20" value="<?=htmlspecialchars((string)($sv_sw['historyLimit'] ?? 5))?>" class="narrow"> <span class="sv-dim">(Swarm-Standard: 5, empfohlen: 1)</span></dd>
+</dl>
+<blockquote class="inline_help">
+  Wie viele Container Swarm pro Service aufhebt – inklusive des laufenden. Bei <b>1</b> bleibt nur der aktuelle übrig; alte, gestoppte Container nach Neustarts/Updates werden auf allen Nodes automatisch gelöscht. Ist ein Service abgestürzt, bleibt der letzte Container zur Fehlersuche stehen.
+</blockquote>
+<dl>
+  <dt>Ausfall-Erkennung (Heartbeat):</dt>
+  <dd><input type="number" id="HEARTBEAT" min="1" max="60" value="<?=htmlspecialchars((string)($sv_sw['heartbeat'] ?? 5))?>" class="narrow"> Sekunden <span class="sv-dim">(Standard: 5)</span></dd>
+</dl>
+<blockquote class="inline_help">
+  Wie oft sich die Nodes beim Manager melden. Kleinere Werte erkennen einen ausgefallenen Pi schneller (Container starten früher auf Unraid neu), erzeugen aber etwas mehr Netzwerkverkehr. Ein Node gilt erst nach mehreren verpassten Heartbeats als „down“.
+</blockquote>
+
+<?endif;?>
+
+<div class="sv-set-title"><i class="fa fa-cubes"></i> Stacks</div>
+<dl>
+  <dt>Entfernte Services beim Deploy löschen:</dt>
+  <dd><select id="DEPLOY_PRUNE">
+    <?=$sv_opt($sv_cfg['DEPLOY_PRUNE'], 'yes', 'Ja (--prune)')?>
+    <?=$sv_opt($sv_cfg['DEPLOY_PRUNE'], 'no', 'Nein')?>
+  </select></dd>
+</dl>
+<blockquote class="inline_help">
+  Bei „Ja“ werden Services, die du aus der docker-stack.yml gelöscht hast, beim nächsten Stack Up / Update Stack auch im Swarm entfernt. Bei „Nein“ laufen sie weiter, bis du den Stack herunterfährst.
+</blockquote>
+<dl>
+  <dt>Stack-Dateien:</dt>
+  <dd><span class="sv-mono"><?=htmlspecialchars($GLOBALS['STACK_ROOT'])?>/&lt;name&gt;/</span></dd>
+</dl>
+
+<div class="sv-set-title"><i class="fa fa-eye"></i> Anzeige</div>
+<dl>
+  <dt>Container anderer Nodes in der Docker-Liste:</dt>
+  <dd><select id="REMOTE_ROWS">
+    <?=$sv_opt($sv_cfg['REMOTE_ROWS'], 'always', 'Immer')?>
+    <?=$sv_opt($sv_cfg['REMOTE_ROWS'], 'advanced', 'Nur in der erweiterten Ansicht')?>
+    <?=$sv_opt($sv_cfg['REMOTE_ROWS'], 'never', 'Nie (nur in der Swarm-Leiste)')?>
+  </select></dd>
+</dl>
+<dl>
+  <dt>Host-Spalte (erweiterte Ansicht):</dt>
+  <dd><select id="HOST_COLUMN">
+    <?=$sv_opt($sv_cfg['HOST_COLUMN'], 'yes', 'Anzeigen')?>
+    <?=$sv_opt($sv_cfg['HOST_COLUMN'], 'no', 'Ausblenden')?>
+  </select></dd>
+</dl>
+<dl>
+  <dt>Swarm-Leiste auf der Docker-Seite:</dt>
+  <dd><select id="SWARM_POSITION">
+    <?=$sv_opt($sv_cfg['SWARM_POSITION'], 'top', 'Ganz oben (über den Containern)')?>
+    <?=$sv_opt($sv_cfg['SWARM_POSITION'], 'middle', 'Zwischen Containern und Compose')?>
+    <?=$sv_opt($sv_cfg['SWARM_POSITION'], 'bottom', 'Ganz unten (unter Compose)')?>
+  </select> <span class="sv-dim">wirkt beim nächsten Öffnen der Docker-Seite</span></dd>
+</dl>
+<dl>
+  <dt>Verwaiste Images in der Docker-Liste:</dt>
+  <dd><select id="ORPHAN_IMAGES">
+    <?=$sv_opt($sv_cfg['ORPHAN_IMAGES'], 'swarm', 'Swarm-Reserve und alte Versionen ausblenden')?>
+    <?=$sv_opt($sv_cfg['ORPHAN_IMAGES'], 'hide', 'Alle ausblenden')?>
+    <?=$sv_opt($sv_cfg['ORPHAN_IMAGES'], 'show', 'Anzeigen (wie Unraid)')?>
+  </select></dd>
+</dl>
+<blockquote class="inline_help">
+  Wechselt ein Swarm-Service den Node, bleibt sein Image auf dem alten Node liegen und Unraid zeigt es in der erweiterten Ansicht als „verwaistes Image“ ganz oben.
+  Diese Images sind eine nützliche Reserve: fällt der andere Node aus, startet der Service sofort, ohne das Image erst herunterzuladen. Deshalb werden sie nur ausgeblendet, nicht gelöscht.
+  <b>Swarm-Reserve und alte Versionen</b> blendet Images aus, die ein Swarm-Service (auf irgendeinem Node) nutzt, und Images ohne Namen (alte Versionen nach Updates – die löscht „Aufräumen“). Andere verwaiste Images bleiben sichtbar.
+  Statt der ausgeblendeten Zeilen steht eine einzelne Zeile mit der Anzahl; ein Klick darauf zeigt sie wieder.
+</blockquote>
+<dl>
+  <dt>CPU/RAM der Folder-View-Ordner:</dt>
+  <dd><select id="FOLDER_LOAD">
+    <?=$sv_opt($sv_cfg['FOLDER_LOAD'], 'total', 'Gesamt (alle Nodes zusammen)')?>
+    <?=$sv_opt($sv_cfg['FOLDER_LOAD'], 'local', 'Nur lokal (wie ohne Plugin)')?>
+  </select>
+  <span class="sv-dim">Die Aufteilung pro Node steht immer im Tooltip über dem Wert. Braucht den CPU/RAM-Agenten.</span></dd>
+</dl>
+<dl>
+  <dt>Aktualisierung alle:</dt>
+  <dd><input type="number" id="REFRESH" min="5" max="300" value="<?=htmlspecialchars($sv_cfg['REFRESH'])?>" class="narrow"> Sekunden</dd>
+</dl>
+
+</div>
+
+<div class="sv-tab" data-tab="nodes">
+<div class="sv-set-title"><i class="fa fa-server"></i> Nodes</div>
+<?if (!$sv_swarm_ok):?>
+<p class="sv-dim">Swarm ist auf diesem Server nicht aktiv oder er ist kein Manager.</p>
+<?else:?>
+<?foreach ($sv_nodes as $n):
+    $host = $n['Hostname'] ?? '?';
+    $i = $sv_ninfo[$host] ?? [];
+    $avail = strtolower($n['Availability'] ?? 'active');
+    $role = ($n['ManagerStatus'] ?? '') !== '' ? 'Manager' . (($n['ManagerStatus'] ?? '') === 'Leader' ? ' (Leader)' : '') : 'Worker';
+    $ready = strtolower($n['Status'] ?? '') === 'ready';
+    $a = $sv_agent[$host] ?? null;
+    $warn = $sv_warn($n);
+?>
+<div class="sv-node-card">
+  <div class="sv-node-head">
+    <i class="fa <?=!empty($n['Self']) ? 'fa-server' : 'fa-external-link'?>"></i>
+    <b><?=htmlspecialchars($host)?></b><?=!empty($n['Self']) ? ' <span class="sv-dim">(dieser Server)</span>' : ''?>
+    <span class="<?=$ready ? 'sv-ok' : 'sv-bad'?>" style="margin-left:10px"><?=$ready ? 'bereit' : 'nicht erreichbar'?></span>
+    <select class="sv-avail" data-node="<?=htmlspecialchars($host)?>" data-current="<?=htmlspecialchars($avail)?>">
+      <?=$sv_opt($avail, 'active', 'Aktiv')?>
+      <?=$sv_opt($avail, 'pause', 'Pausiert – keine neuen Container')?>
+      <?=$sv_opt($avail, 'drain', 'Wartung – alle Container abziehen')?>
+    </select>
+  </div>
+  <table class="sv-node-facts"><tr>
+    <td><span class="sv-dim">Rolle</span><br><?=htmlspecialchars($role)?></td>
+    <td><span class="sv-dim">IP</span><br><span class="sv-mono"><?=htmlspecialchars($i['addr'] ?? '–')?></span></td>
+    <td><span class="sv-dim">Architektur</span><br><?=htmlspecialchars($i['arch'] ?? '–')?></td>
+    <td><span class="sv-dim">Docker</span><br><?=htmlspecialchars($i['engine'] ?? '–')?></td>
+    <td><span class="sv-dim">CPU / RAM</span><br><?=htmlspecialchars(($i['cpus'] ?? '?') . ' Kerne / ' . ($i['memGB'] ?? '?') . ' GB')?></td>
+    <td><span class="sv-dim">Agent</span><br><?=$sv_cfg['STATS'] !== 'yes' ? '<span class="sv-dim">aus</span>' : ($a ? htmlspecialchars($sv_ago($a['ts'] ?? 0)) : '<span class="sv-warn">keine Daten</span>')?></td>
+    <td><span class="sv-dim">Labels</span><br><span class="sv-mono"><?=$i['labels'] ?? [] ? htmlspecialchars(implode(', ', array_map(fn($k, $v) => "$k=$v", array_keys($i['labels']), $i['labels']))) : '–'?></span></td>
+  </tr></table>
+  <?foreach ($warn as [$lvl, $txt]):?>
+    <div class="sv-node-warn sv-node-warn-<?=$lvl?>"><i class="fa fa-<?=$lvl === 'bad' ? 'times-circle' : 'exclamation-triangle'?>"></i> <?=$txt?></div>
+  <?endforeach;?>
+</div>
+<?endforeach;?>
+<blockquote class="inline_help">
+  <b>Pausiert:</b> laufende Container bleiben, aber Swarm startet dort nichts Neues.<br>
+  <b>Wartung (drain):</b> alle Swarm-Container werden auf andere Nodes verschoben – z. B. bevor du den Pi neu startest oder umbaust. Danach wieder auf „Aktiv“ stellen; Services mit „★ Node“ kehren dann von selbst zurück.
+  Die Verfügbarkeit wird sofort geändert, ohne „Übernehmen“.
+</blockquote>
+<?endif;?>
+</div>
+
+<div class="sv-tab" data-tab="watch">
+<div class="sv-set-title"><i class="fa fa-flash"></i> Update-Hinweise</div>
+<dl>
+  <dt>Nach Image-Updates suchen:</dt>
+  <dd><select id="UPDATE_CHECK" class="sv-toggle" data-target="#sv-upd-details"><?=$sv_on('UPDATE_CHECK')?></select></dd>
+</dl>
+<div id="sv-upd-details">
+<dl>
+  <dt>Prüfen alle:</dt>
+  <dd><?=$sv_num('UPDATE_INTERVAL', 1, 168)?> Stunden</dd>
+</dl>
+</div>
+<dl>
+  <dt>Letzte Prüfung:</dt>
+  <dd><span id="sv-upd-last"><?=htmlspecialchars($sv_upd_when)?><?=$sv_upd_count ? " – <b class=\"sv-upd\">$sv_upd_count Update" . ($sv_upd_count === 1 ? '' : 's') . ' verfügbar</b>' : ''?></span>
+      <input type="button" id="sv-upd-now" value="Jetzt prüfen"<?=$sv_swarm_ok ? '' : ' disabled'?> style="margin-left:10px"></dd>
+</dl>
+<blockquote class="inline_help">
+  Vergleicht für jeden Swarm-Service die laufende Image-Version mit der Registry – genauso wie Unraid es für normale Container macht (inkl. privater Registries mit hinterlegten Zugangsdaten).
+  Gefundene Updates erscheinen als <b>Update</b>-Badge und Button in der Swarm-Leiste und im Menü der Container. Lokal gebaute Images (ohne Registry) können nicht geprüft werden.
+  <b>Rollback</b> setzt einen Service auf seine vorherige Version zurück, falls ein Update Probleme macht.
+</blockquote>
+
+<div class="sv-set-title"><i class="fa fa-bell"></i> Benachrichtigungen</div>
+<dl>
+  <dt>Benachrichtigungen:</dt>
+  <dd><select id="NOTIFY_ENABLED" class="sv-toggle" data-target="#sv-notify-details"><?=$sv_on('NOTIFY_ENABLED')?></select>
+      <input type="button" id="sv-notify-test" value="Test senden" style="margin-left:10px"></dd>
+</dl>
+<blockquote class="inline_help">
+  Verschickt Meldungen über Unraids eigenes Benachrichtigungssystem – also überall dorthin, wo du es unter <i>Einstellungen → Benachrichtigungen</i> eingerichtet hast (Browser, E-Mail, Telegram, Discord …).
+  Ein Hintergrund-Wächter prüft dafür jede Minute den Swarm.
+</blockquote>
+<div id="sv-notify-details">
+<table class="sv-notify-table">
+  <thead><tr><th>Ereignis</th><th>Melden</th><th>Bedingung</th><th>Wichtigkeit</th></tr></thead>
+  <tbody>
+    <tr><td><b>Node offline</b><div class="sv-dim">z. B. Pi ausgefallen oder vom Netz</div></td>
+        <td><select id="NOTIFY_NODE"><?=$sv_yn('NOTIFY_NODE')?></select></td>
+        <td>nach <?=$sv_num('NOTIFY_NODE_DELAY', 0, 120)?> Min.</td>
+        <td><?=$sv_lvl('NOTIFY_NODE_LEVEL')?></td></tr>
+    <tr><td><b>Neustart-Schleife</b><div class="sv-dim">Container stürzt immer wieder ab</div></td>
+        <td><select id="NOTIFY_CRASH"><?=$sv_yn('NOTIFY_CRASH')?></select></td>
+        <td><?=$sv_num('NOTIFY_CRASH_COUNT', 2, 50)?> Neustarts in <?=$sv_num('NOTIFY_CRASH_WINDOW', 2, 240)?> Min.</td>
+        <td><?=$sv_lvl('NOTIFY_CRASH_LEVEL')?></td></tr>
+    <tr><td><b>Kann nicht starten</b><div class="sv-dim">kein passender Node (Image, Constraints, Ressourcen)</div></td>
+        <td><select id="NOTIFY_PENDING"><?=$sv_yn('NOTIFY_PENDING')?></select></td>
+        <td>nach <?=$sv_num('NOTIFY_PENDING_DELAY', 0, 240)?> Min.</td>
+        <td><?=$sv_lvl('NOTIFY_PENDING_LEVEL')?></td></tr>
+    <tr><td><b>Node gewechselt</b><div class="sv-dim">Service ist ausgewichen oder zurückgekehrt</div></td>
+        <td><select id="NOTIFY_MOVED"><?=$sv_yn('NOTIFY_MOVED')?></select></td>
+        <td><span class="sv-dim">sofort</span></td>
+        <td><?=$sv_lvl('NOTIFY_MOVED_LEVEL')?></td></tr>
+    <tr><td><b>Update verfügbar</b><div class="sv-dim">einmal pro neuer Version (Update-Hinweise müssen an sein)</div></td>
+        <td><select id="NOTIFY_UPDATES"><?=$sv_yn('NOTIFY_UPDATES')?></select></td>
+        <td><span class="sv-dim">bei jeder Prüfung</span></td>
+        <td><?=$sv_lvl('NOTIFY_UPDATES_LEVEL')?></td></tr>
+  </tbody>
+</table>
+<dl>
+  <dt>Entwarnung senden:</dt>
+  <dd><select id="NOTIFY_RECOVERY"><?=$sv_yn('NOTIFY_RECOVERY')?></select> <span class="sv-dim">„Behoben: …“, sobald ein gemeldetes Problem weg ist</span></dd>
+</dl>
+<dl>
+  <dt>Erinnern, solange ein Problem besteht:</dt>
+  <dd>alle <?=$sv_num('NOTIFY_REPEAT', 0, 168)?> Stunden <span class="sv-dim">(0 = nur einmal melden)</span></dd>
+</dl>
+<dl>
+  <dt>Services ignorieren:</dt>
+  <dd><input type="text" id="NOTIFY_IGNORE" value="<?=htmlspecialchars($sv_cfg['NOTIFY_IGNORE'])?>" placeholder="z. B. ^test_|_debug$" style="width:280px" spellcheck="false" autocapitalize="off"></dd>
+</dl>
+<blockquote class="inline_help">
+  Regulärer Ausdruck auf den Service-Namen (z. B. <code>paperless_paperless-ngx</code>). Passende Services lösen keine Meldungen zu Neustarts, Startproblemen oder Node-Wechseln aus.
+  Die Verzögerungen verhindern Fehlalarme bei kurzen Aussetzern, z. B. wenn der Pi nur neu startet.
+</blockquote>
+</div>
+
+<div class="sv-set-title"><i class="fa fa-star"></i> Bevorzugter Node</div>
+<dl>
+  <dt>Automatische Rückkehr:</dt>
+  <dd><select id="REBALANCE" class="sv-toggle" data-target="#sv-rebal-details"><?=$sv_on('REBALANCE')?></select>
+    <?if ($sv_prefer):?>
+      <span class="sv-dim" style="margin-left:10px" title="<?=htmlspecialchars(implode("\n", array_map(fn($k, $v) => "$k → $v", array_keys($sv_prefer), $sv_prefer)))?>"><?=count($sv_prefer)?> Service<?=count($sv_prefer) === 1 ? '' : 's'?> mit Vorzug: <?=htmlspecialchars(implode(', ', array_map(fn($k, $v) => preg_replace('/^[^_]+_/', '', $k) . " → $v", array_keys($sv_prefer), $sv_prefer)))?></span>
+    <?else:?>
+      <span class="sv-warn" style="margin-left:10px">Noch kein Service hat einen bevorzugten Node – in der Swarm-Leiste bei „Läuft auf“ „★ Node“ wählen.</span>
+    <?endif;?></dd>
+</dl>
+<div id="sv-rebal-details">
+<dl>
+  <dt>Node muss stabil laufen:</dt>
+  <dd><?=$sv_num('REBALANCE_DELAY', 1, 120)?> Minuten, bevor Services zurückkehren</dd>
+</dl>
+</div>
+<blockquote class="inline_help">
+  Services mit dem Label <code>swarm-view.prefer</code> laufen bevorzugt auf diesem Node, weichen bei einem Ausfall aus und kehren danach <b>automatisch zurück</b>, sobald der Node wieder stabil läuft. In der docker-stack.yml:
+  <pre class="sv-mono">    deploy:
+      labels:
+        swarm-view.prefer: raspberrypi</pre>
+  Die Rückkehr kostet einen Neustart des Containers. Services mit festem Node (Constraint in der Datei oder Node-Auswahl) werden nicht verschoben.
+</blockquote>
+
+</div>
+
+<div class="sv-tab" data-tab="maint">
+<div class="sv-set-title"><i class="fa fa-trash"></i> Aufräumen</div>
+<dl>
+  <dt>Automatisch aufräumen:</dt>
+  <dd><select id="CLEANUP_SCHEDULE">
+    <?=$sv_opt($sv_cfg['CLEANUP_SCHEDULE'], 'off', 'Aus')?>
+    <?=$sv_opt($sv_cfg['CLEANUP_SCHEDULE'], 'daily', 'Täglich (04:17)')?>
+    <?=$sv_opt($sv_cfg['CLEANUP_SCHEDULE'], 'weekly', 'Wöchentlich (So 04:17)')?>
+  </select></dd>
+</dl>
+<dl>
+  <dt>Verwaiste Images mitlöschen:</dt>
+  <dd><select id="CLEANUP_IMAGES">
+    <?=$sv_opt($sv_cfg['CLEANUP_IMAGES'], 'yes', 'Ja')?>
+    <?=$sv_opt($sv_cfg['CLEANUP_IMAGES'], 'no', 'Nein')?>
+  </select></dd>
+</dl>
+<blockquote class="inline_help">
+  Aufräumen startet auf jedem Node einmal einen kleinen Job, der gestoppte Swarm-Container löscht – und auf Wunsch verwaiste Images (alte Versionen nach Updates, die kein Container mehr nutzt). Laufende Container, Compose- und Unraid-Container bleiben unberührt. Das Ergebnis landet im Syslog (Tag „swarm-view“).
+</blockquote>
+<dl>
+  <dt>Jetzt aufräumen:</dt>
+  <dd><input type="button" id="sv-set-cleanup" value="Aufräumen"<?=$sv_swarm_ok ? '' : ' disabled'?>></dd>
+</dl>
+
+<div class="sv-set-title"><i class="fa fa-tachometer"></i> Auslastung (CPU/RAM)</div>
+<dl>
+  <dt>Auslastung aller Nodes messen:</dt>
+  <dd><select id="STATS" class="sv-toggle" data-target="#sv-stats-details"><?=$sv_on('STATS')?></select></dd>
+</dl>
+<div id="sv-stats-details">
+<dl>
+  <dt>Messen alle:</dt>
+  <dd><?=$sv_num('STATS_INTERVAL', 5, 300)?> Sekunden</dd>
+</dl>
+</div>
+<blockquote class="inline_help">
+  Startet einen kleinen Agenten (<code>swarm-view-agent</code>, max. 64 MB RAM) auf jedem Node. Er liefert CPU/RAM der Nodes und der Container – auch der Container auf dem Pi, die sonst ohne Werte bleiben.
+  Der Agent erscheint nicht in der Container-Liste. Beim Ausschalten wird er entfernt.
+</blockquote>
+
+</div>
+
+<div class="sv-tab" data-tab="status">
+<div class="sv-set-title"><i class="fa fa-heartbeat"></i> Hintergrund-Wächter</div>
+<?php
+  $sv_need = sv_monitor_needed($sv_cfg);
+  $sv_last = (int)($sv_mon['lastRun'] ?? 0);
+  $sv_late = $sv_need && (!$sv_last || time() - $sv_last > 180);
+?>
+<dl><dt>Wächter:</dt><dd>
+  <?if (!$sv_need):?><span class="sv-dim">aus – keine Funktion eingeschaltet, die ihn braucht (Benachrichtigungen, Update-Hinweise, Rückkehr)</span>
+  <?elseif ($sv_late):?><span class="sv-bad">läuft nicht</span> <span class="sv-dim">– letzter Lauf: <?=htmlspecialchars($sv_ago($sv_last))?> · Einmal „Übernehmen“ drücken richtet den Cron-Eintrag neu ein.</span>
+  <?else:?><span class="sv-ok">läuft</span> <span class="sv-dim">– letzter Lauf: <?=htmlspecialchars($sv_ago($sv_last))?></span><?endif;?>
+</dd></dl>
+<dl><dt>CPU/RAM-Agent:</dt><dd>
+  <?if ($sv_cfg['STATS'] !== 'yes'):?><span class="sv-dim">aus</span>
+  <?elseif (!$sv_agent):?><span class="sv-warn">keine Daten</span>
+  <?else: foreach ($sv_agent as $h => $a):?><span class="<?=!empty($a['stale']) ? 'sv-warn' : 'sv-ok'?>" style="margin-right:14px"><?=htmlspecialchars($h)?>: <?=htmlspecialchars($sv_ago($a['ts'] ?? 0))?></span><?endforeach; endif;?>
+</dd></dl>
+<dl><dt>Letzte Update-Prüfung:</dt><dd><?=htmlspecialchars($sv_upd_when)?><?=$sv_upd_count ? " – <b class=\"sv-upd\">$sv_upd_count Update" . ($sv_upd_count === 1 ? '' : 's') . ' verfügbar</b>' : ''?></dd></dl>
+<?if (!empty($sv_mon['rebalance'])):?>
+<dl><dt>Laufende Rückkehr:</dt><dd><?=htmlspecialchars(implode(', ', array_map(fn($k, $v) => "$k → {$v['node']}", array_keys($sv_mon['rebalance']), $sv_mon['rebalance'])))?></dd></dl>
+<?endif;?>
+<?if (!empty($sv_mon['alerts'])):?>
+<dl><dt>Offene Probleme:</dt><dd><?foreach ($sv_mon['alerts'] as $al):?><div><span class="sv-warn"><?=htmlspecialchars($al['subject'] ?? '')?></span> <span class="sv-dim">(aufgetreten <?=htmlspecialchars($sv_ago($al['since'] ?? 0))?><?=!empty($al['notified']) ? ', gemeldet' : ', noch nicht gemeldet – Verzögerung läuft'?>)</span></div><?endforeach;?></dd></dl>
+<?endif;?>
+
+<div class="sv-set-title"><i class="fa fa-list"></i> Letzte Meldungen und Ereignisse</div>
+<?php
+  $sv_feed = [];
+  foreach ($sv_mon['history'] ?? [] as $hst) $sv_feed[] = ['t' => $hst['t'], 'cls' => ['normal' => 'sv-ok', 'warning' => 'sv-warn', 'alert' => 'sv-bad'][$hst['level']] ?? '', 'icon' => 'fa-bell', 'text' => $hst['subject'] . ' – ' . $hst['desc']];
+  foreach ($sv_mon['events'] ?? [] as $ev) $sv_feed[] = ['t' => $ev['t'], 'cls' => 'sv-dim', 'icon' => 'fa-cog', 'text' => $ev['text']];
+  usort($sv_feed, fn($x, $y) => $y['t'] <=> $x['t']);
+  $sv_feed = array_slice($sv_feed, 0, 10);
+?>
+<?if (!$sv_feed):?><p class="sv-dim">Noch nichts – der Wächter hat bisher nichts gemeldet oder verändert.</p>
+<?else:?><table class="sv-feed"><?foreach ($sv_feed as $f):?>
+  <tr><td class="sv-dim" style="white-space:nowrap"><?=date('d.m. H:i', (int)$f['t'])?></td><td><i class="fa <?=$f['icon']?> <?=$f['cls']?>"></i></td><td><?=htmlspecialchars($f['text'])?></td></tr>
+<?endforeach;?></table><?endif;?>
+<blockquote class="inline_help">
+  Meldungen sind die Benachrichtigungen, die über Unraid verschickt wurden; Ereignisse sind Aktionen des Wächters (Rückkehr auf den bevorzugten Node, Update-Prüfungen). Der Verlauf liegt im RAM und ist nach einem Neustart von Unraid leer.
+</blockquote>
+</div>
+
+<div class="sv-set-buttons">
+  <input type="button" id="sv-set-apply" value="Übernehmen" disabled>
+  <input type="button" id="sv-set-done" value="Fertig">
+  <span id="sv-set-status" class="sv-dim"></span>
+</div>
+</div>
+
+<script>
+(function ($) {
+  'use strict';
+  const ACTIONS = '/plugins/swarm-view/include/actions.php';
+  const post = (d) => $.ajax({ url: ACTIONS, type: 'POST', data: d, dataType: 'json', timeout: 120000 });
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const show = (title, r) => {
+    const text = [r.error, r.log].filter(Boolean).join('\n\n') || (r.ok ? 'OK' : 'Fehler');
+    if (typeof swal === 'function') setTimeout(() => swal({ title, text: `<pre class="sv-log">${esc(text)}</pre>`, html: true, type: r.ok ? 'success' : 'error' }), 150);
+    else alert(`${title}\n\n${text}`);
+  };
+  const confirmBox = (title, text, cb, cancel) => {
+    if (typeof swal === 'function') swal({ title, text, type: 'warning', showCancelButton: true, confirmButtonText: 'Ja', cancelButtonText: 'Abbrechen' }, (ok) => (ok ? cb() : cancel && cancel()));
+    else if (confirm(`${title}\n\n${text}`)) cb(); else if (cancel) cancel();
+  };
+  const fail = (x) => ({ ok: false, error: `Anfrage fehlgeschlagen (${x.status || 'Timeout'})` });
+
+  // ---------- Tabs (gewählter Tab bleibt in der Sitzung) ----------
+  const TAB_KEY = 'swarmview_settings_tab';
+  const showTab = (t) => {
+    if (!$(`.sv-tab[data-tab="${t}"]`).length) t = 'general';
+    $('.sv-tab').hide().filter(`[data-tab="${t}"]`).show();
+    $('.sv-tabbtn').removeClass('active').filter(`[data-tab="${t}"]`).addClass('active');
+    try { sessionStorage.setItem(TAB_KEY, t); } catch (e) { /* egal */ }
+  };
+  $('.sv-tabbtn').on('click', function (e) { e.preventDefault(); showTab($(this).data('tab')); });
+  showTab((location.hash || '').slice(1) || (() => { try { return sessionStorage.getItem(TAB_KEY); } catch (e) { return null; } })() || 'general');
+
+  // ---------- Ungespeicherte Änderungen ----------
+  const FIELDS = 'select[id], input[type=number][id], input[type=text][id]';
+  const snapshot = () => JSON.stringify($('#sv-settings').find(FIELDS).map(function () { return [this.id, $(this).val()]; }).get());
+  let saved = snapshot();
+  const dirty = () => snapshot() !== saved;
+  const syncDirty = () => {
+    const d = dirty();
+    $('#sv-set-apply').prop('disabled', !d);
+    if (d) $('#sv-set-status').attr('class', 'sv-warn').text('Ungespeicherte Änderungen');
+    else if ($('#sv-set-status').text() === 'Ungespeicherte Änderungen') $('#sv-set-status').text('');
+  };
+  $('#sv-settings').on('change input', FIELDS, syncDirty);
+  window.addEventListener('beforeunload', (e) => { if (dirty()) { e.preventDefault(); e.returnValue = ''; } });
+  $('#sv-set-done').on('click', () => {
+    if (dirty()) confirmBox('Änderungen verwerfen?', 'Es gibt ungespeicherte Änderungen.', () => { saved = snapshot(); done(); });
+    else done();
+  });
+
+  $('#sv-set-apply').on('click', function () {
+    const $b = $(this).prop('disabled', true);
+    const d = { action: 'settings' };
+    $('#sv-settings').find(FIELDS).each(function () { d[this.id] = $(this).val(); });
+    const snap = snapshot();
+    $('#sv-set-status').attr('class', 'sv-dim').text('Speichere …');
+    post(d)
+      .done((r) => {
+        if (r.ok) saved = snap;
+        $('#sv-set-status').attr('class', r.ok ? 'sv-ok' : 'sv-bad').text(r.ok ? 'Gespeichert.' : 'Nicht gespeichert.');
+        if (!r.ok || /Task-Historie|Heartbeat|Agent: gestartet|Agent konnte|Wächter/.test(r.log || '')) show('Swarm View', r);
+      })
+      .fail((x) => { $('#sv-set-status').attr('class', 'sv-bad').text('Nicht gespeichert.'); show('Swarm View', fail(x)); })
+      .always(() => syncDirty());
+  });
+
+  $('#sv-set-cleanup').on('click', function () {
+    const $b = $(this);
+    confirmBox('Swarm aufräumen?', 'Löscht auf allen Nodes gestoppte Swarm-Container' + ($('#CLEANUP_IMAGES').val() === 'yes' ? ' und verwaiste Images' : '') + '. Laufende Container bleiben unberührt.', () => {
+      $b.prop('disabled', true).val('räumt auf …');
+      post({ action: 'cleanup' }).done((r) => show('Aufräumen', r)).fail((x) => show('Aufräumen', fail(x)))
+        .always(() => $b.prop('disabled', false).val('Aufräumen'));
+    });
+  });
+
+  // Detail-Optionen nur zeigen, wenn die Funktion an ist
+  const syncToggles = () => $('.sv-toggle').each(function () { $($(this).data('target')).toggle($(this).val() === 'yes'); });
+  $('.sv-toggle').on('change', syncToggles);
+  syncToggles();
+
+  $('#sv-upd-now').on('click', function () {
+    const $b = $(this).prop('disabled', true).val('prüfe …');
+    post({ action: 'update-check' })
+      .done((r) => { show('Update-Prüfung', r); if (r.ok) $('#sv-upd-last').text('gerade eben'); })
+      .fail((x) => show('Update-Prüfung', fail(x)))
+      .always(() => $b.prop('disabled', false).val('Jetzt prüfen'));
+  });
+
+  $('#sv-notify-test').on('click', function () {
+    post({ action: 'notify-test', level: 'normal' }).done((r) => show('Benachrichtigung', r)).fail((x) => show('Benachrichtigung', fail(x)));
+  });
+
+  $('.sv-avail').on('change', function () {
+    const $s = $(this);
+    const node = String($s.data('node'));
+    const val = $s.val();
+    const cur = String($s.data('current'));
+    const texts = {
+      active: `${node} wieder normal nutzen?`,
+      pause: `${node} pausieren? Laufende Container bleiben, es werden aber keine neuen dort gestartet.`,
+      drain: `${node} in Wartung schicken? Alle Swarm-Container werden auf andere Nodes verschoben.`,
+    };
+    confirmBox('Node-Verfügbarkeit ändern', texts[val], () => {
+      $s.prop('disabled', true);
+      post({ action: 'node-availability', node, availability: val })
+        .done((r) => { if (r.ok) $s.data('current', val); else { $s.val(cur); show('Node', r); } })
+        .fail((x) => { $s.val(cur); show('Node', fail(x)); })
+        .always(() => $s.prop('disabled', false));
+    }, () => $s.val(cur));
+  });
+})(jQuery);
+</script>
+]]></INLINE>
+</FILE>
+<FILE Name="&plugdir;/css/swarm-view.css">
+<INLINE><![CDATA[/* Swarm View */
+
+/* Erweiterte Ansicht: alles mit .sv-adv nur sichtbar, wenn Unraids "Advanced View" an ist */
+body:not(.sv-advanced) .sv-adv { display: none !important; }
+
+/* ---------- Swarm-Stacks-Leiste ---------- */
+#sv-root .sv-msg { margin: 8px 0; padding: 8px 12px; border-radius: 4px; border: 1px solid; }
+#sv-root .sv-msg.info  { border-color: rgba(33,150,243,.6); background: rgba(33,150,243,.08); }
+#sv-root .sv-msg.error { border-color: rgba(244,67,54,.7);  background: rgba(244,67,54,.08); }
+#sv-root .sv-nodes { margin: 6px 0 10px; }
+#sv-root .sv-summary { margin-bottom: 6px; opacity: .8; }
+#sv-root .sv-cards { display: flex; flex-wrap: wrap; gap: 8px; }
+#sv-root .sv-card { flex: 0 1 340px; min-width: 260px; padding: 6px 10px; border: 1px solid rgba(128,128,128,.35); border-radius: 6px; box-sizing: border-box; }
+#sv-root .sv-card.sv-card-down { border-color: rgba(244,67,54,.6); }
+#sv-root .sv-card-head { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#sv-root .sv-card-head .fa { margin-right: 6px; opacity: .8; }
+#sv-root .sv-card-head .sv-dim { margin-left: 6px; font-size: .9em; }
+#sv-root .sv-card-state { float: right; margin-left: 8px; font-size: .9em; }
+#sv-root .sv-card-note { font-size: .9em; margin-top: 3px; }
+#sv-root .sv-meter { display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: .88em; }
+#sv-root .sv-meter-label { width: 30px; opacity: .7; }
+#sv-root .sv-meter-track { flex: 1; height: 6px; border-radius: 3px; background: rgba(128,128,128,.25); overflow: hidden; }
+#sv-root .sv-meter-fill { display: block; height: 100%; background: #4caf50; }
+#sv-root .sv-meter-fill.sv-bar-warn { background: #ff9800; }
+#sv-root .sv-meter-fill.sv-bar-bad  { background: #f44336; }
+#sv-root .sv-meter-val { width: 38px; text-align: right; }
+
+#sv-stacks td, #sv-stacks th { vertical-align: top; }
+#sv-stacks th:not(:first-child) { text-align: left; }
+#sv-stacks tr.sv-stack { cursor: pointer; }
+#sv-stacks .sv-stackname { color: #ff8c2f; font-weight: bold; font-size: 1.15em; }
+#sv-stacks .sv-stackicon { color: #ff8c2f; font-size: 1.4em; margin-right: 6px; vertical-align: middle; }
+#sv-stacks .sv-caret { width: 12px; margin-right: 6px; opacity: .6; }
+#sv-stacks td.sv-stackcell { text-align: left; }
+#sv-stacks .sv-desc, #sv-stacks .sv-path { margin: 3px 0 0 52px; }
+#sv-stacks .sv-path { font-size: .85em; }
+#sv-stacks .sv-small { font-size: .85em; margin-top: 3px; white-space: nowrap; }
+#sv-stacks .sv-col-status { width: 130px; }
+#sv-stacks .sv-col-cmds { width: 1%; }
+#sv-stacks td.sv-cmds { text-align: right; }
+/* Service-Zeilen: eine Textzeile */
+#sv-stacks tr.sv-svc td { padding-top: 3px; padding-bottom: 3px; white-space: nowrap; vertical-align: middle; }
+#sv-stacks tr.sv-svc td:first-child { text-align: left; }
+#sv-stacks td.sv-svcname { max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+#sv-stacks .sv-ports { margin-left: 8px; }
+#sv-stacks td.sv-where .sv-where-badges { display: inline-block; min-width: 125px; vertical-align: middle; }
+#sv-stacks td.sv-where select.sv-place { width: 180px; max-width: 180px; min-width: 0; margin: 0 0 0 6px; padding-top: 1px; padding-bottom: 1px; vertical-align: middle; }
+#sv-stacks .sv-cons { font-size: .82em; opacity: .6; white-space: normal; margin-top: 2px; font-family: monospace; }
+#sv-stacks .sv-menu { font-size: 1.25em; padding: 2px 10px; cursor: pointer; opacity: .75; }
+#sv-stacks .sv-menu:hover { opacity: 1; }
+#sv-stacks td.sv-image { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+#sv-stacks tr.sv-svc { display: none; }
+#sv-stacks tr.sv-svc.sv-open { display: table-row; }
+#sv-stacks tr.sv-svc td:first-child { padding-left: 56px; }
+#sv-stacks .sv-empty td { opacity: .6; font-style: italic; }
+
+/* ---------- Gemeinsam ---------- */
+.sv-mono { font-family: monospace; font-size: .92em; }
+.sv-dim  { opacity: .65; }
+.sv-badge {
+  display: inline-block; white-space: nowrap;
+  padding: 1px 8px; margin: 1px 4px 1px 0;
+  border-radius: 10px; border: 1px solid; font-size: .9em;
+}
+.sv-badge .fa { margin-right: 4px; }
+.sv-local   { border-color: rgba(76,175,80,.7);  background: rgba(76,175,80,.15); }
+.sv-remote  { border-color: rgba(33,150,243,.7); background: rgba(33,150,243,.15); }
+.sv-pending { border-color: rgba(255,152,0,.8);  background: rgba(255,152,0,.15); }
+.sv-ok   { color: #4caf50; }
+.sv-warn { color: #ff9800; }
+.sv-bad  { color: #f44336; }
+
+/* ---------- Unraid-Container-Tabelle ---------- */
+#docker_containers td.sv-hostcol { white-space: nowrap; }
+/* Name wie bei lokalen Containern ohne Vorlage: normale Textfarbe; Klick öffnet das Menü */
+#docker_list tr.sv-remote-row .appname a.sv-name { color: inherit; cursor: pointer; text-decoration: none; }
+#docker_list tr.sv-remote-row .appname a.sv-name:hover { text-decoration: underline; }
+#docker_containers td.sv-hostcol .sv-small { font-size: .85em; }
+#docker_list td.updatecolumn .sv-updline:empty { display: none; }
+
+/* Log-Fenster für Pi-Container */
+#sv-logbox { position: fixed; inset: 0; z-index: 10050; background: rgba(0,0,0,.55); padding: 4vh 3vw; box-sizing: border-box; }
+#sv-logbox .sv-logbox-inner { height: 100%; display: flex; flex-direction: column; padding: 12px 14px; border-radius: 6px;
+  background: var(--background-color, #1c1b1b); color: var(--text-color, inherit); border: 1px solid rgba(128,128,128,.5); box-sizing: border-box; }
+#sv-logbox .sv-logbox-head { overflow: hidden; margin-bottom: 6px; line-height: 2.2; }
+#sv-logbox .sv-logbox-head .sv-right { float: right; }
+#sv-logbox .sv-logbox-head input { margin: 0 0 0 8px; }
+#sv-logbox .sv-log { flex: 1; max-height: none; margin: 0; }
+
+/* ---------- Stack-Verwaltung ---------- */
+#sv-stacks .sv-gear { color: #ff8c2f; font-size: 1.5em; margin-right: 8px; vertical-align: middle; cursor: pointer; }
+#sv-stacks .sv-gear:hover { opacity: .75; }
+#sv-stacks td.sv-cmds { white-space: nowrap; }
+#sv-stacks td.sv-cmds input[type=button] { margin: 2px 0 2px 6px; }
+#sv-root .sv-bottom { margin: 12px 0 4px; }
+
+#sv-editor {
+  margin: 10px 0 18px; padding: 12px 14px;
+  border: 1px solid rgba(255,140,47,.6); border-radius: 6px; background: rgba(255,140,47,.04);
+}
+#sv-editor .sv-ed-head { margin-bottom: 8px; }
+#sv-editor .sv-ed-head .sv-dim { margin-left: 10px; }
+#sv-editor .sv-ed-tabs { margin-bottom: 6px; }
+#sv-editor .sv-ed-tab { display: inline-block; padding: 4px 12px; margin-right: 4px; border-radius: 4px 4px 0 0; border: 1px solid rgba(128,128,128,.4); border-bottom: none; opacity: .65; text-decoration: none; }
+#sv-editor .sv-ed-tab.active { opacity: 1; border-color: rgba(255,140,47,.8); font-weight: bold; }
+#sv-editor .sv-ed-text {
+  width: 100%; min-height: 360px; box-sizing: border-box; resize: vertical;
+  font-family: monospace; font-size: 13px; line-height: 1.45; tab-size: 2; white-space: pre;
+  padding: 8px; color: inherit; background: rgba(0,0,0,.18); border: 1px solid rgba(128,128,128,.45); border-radius: 4px;
+}
+#sv-editor .sv-ed-buttons { margin-top: 8px; overflow: hidden; }
+#sv-editor .sv-ed-buttons input { margin: 4px 8px 4px 0; }
+#sv-editor .sv-right { float: right; margin-right: 0; }
+
+.sv-log {
+  white-space: pre-wrap; word-break: break-word; text-align: left;
+  max-height: 300px; overflow: auto; margin: 8px 0 0; padding: 8px;
+  font-family: monospace; font-size: 12px; border-radius: 4px; border: 1px solid rgba(128,128,128,.4);
+}
+.sv-log.sv-log-ok  { border-color: rgba(76,175,80,.7); }
+.sv-log.sv-log-err { border-color: rgba(244,67,54,.8); }
+
+/* ---------- Einstellungsseite ---------- */
+#sv-settings .sv-set-title { margin: 26px 0 10px; padding-bottom: 6px; font-size: 1.15em; font-weight: bold; letter-spacing: .03em;
+  border-bottom: 1px solid rgba(128,128,128,.35); }
+#sv-settings .sv-set-title:first-child { margin-top: 6px; }
+#sv-settings .sv-set-title .fa { margin-right: 8px; color: #ff8c2f; }
+#sv-settings input.narrow { width: 80px; }
+#sv-settings .sv-set-nodes { width: 100%; max-width: 900px; }
+#sv-settings .sv-set-nodes select { min-width: 260px; }
+
+/* ---------- Updates / bevorzugter Node / Auslastung ---------- */
+.sv-upd { color: #ff9800; font-weight: bold; }
+.sv-badge.sv-upd-badge { border-color: rgba(255,152,0,.8); background: rgba(255,152,0,.15); }
+#sv-stacks .sv-svc-btns { margin-top: 4px; white-space: nowrap; }
+#sv-stacks .sv-svc-btns input { margin: 2px 6px 2px 0; padding: 2px 10px; font-size: .85em; }
+.sv-statbar { width: 90px; margin: 3px 0; }
+#sv-settings .sv-notify-table { width: 100%; max-width: 980px; margin: 6px 0 12px; border-collapse: collapse; }
+#sv-settings .sv-notify-table th { text-align: left; padding: 6px 8px; opacity: .8; border-bottom: 1px solid rgba(128,128,128,.35); }
+#sv-settings .sv-notify-table td { padding: 8px; vertical-align: top; border-bottom: 1px solid rgba(128,128,128,.15); }
+#sv-settings .sv-notify-table input.narrow { width: 64px; }
+#sv-settings blockquote pre { margin: 6px 0; }
+
+/* Anzeigename aus dem Label swarm-view.name: echter Name bleibt im DOM (Folder View braucht ihn), sichtbar ist nur der Anzeigename */
+#docker_list .appname[data-sv-alias] { font-size: 0 !important; }
+#docker_list .appname[data-sv-alias] > a { font-size: 0 !important; }
+#docker_list .appname[data-sv-alias]::before { content: attr(data-sv-alias); font-size: var(--sv-fs, 13px); }
+
+/* ---------- Einstellungen: Tabs, Nodes, Status ---------- */
+#sv-settings .sv-tabbar { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid rgba(128,128,128,.4); margin: 4px 0 14px; }
+#sv-settings .sv-tabbtn { padding: 8px 16px; border: 1px solid transparent; border-bottom: none; border-radius: 4px 4px 0 0; text-decoration: none; color: inherit; opacity: .7; margin-bottom: -1px; }
+#sv-settings .sv-tabbtn:hover { opacity: 1; }
+#sv-settings .sv-tabbtn.active { opacity: 1; font-weight: bold; border-color: rgba(128,128,128,.4); border-bottom: 2px solid #ff8c2f; }
+#sv-settings .sv-tabbtn .fa { margin-right: 4px; }
+#sv-settings .sv-tabbadge { display: inline-block; min-width: 16px; padding: 0 5px; margin-left: 4px; border-radius: 8px; background: #ff9800; color: #000; font-size: .8em; text-align: center; font-weight: bold; }
+#sv-settings dd { white-space: nowrap; }
+#sv-settings dd select + .sv-dim, #sv-settings dd select + .sv-warn { white-space: normal; }
+#sv-settings input.narrow { width: 70px; }
+#sv-settings .sv-set-buttons { margin: 18px 0 6px; padding-top: 12px; border-top: 1px solid rgba(128,128,128,.3); }
+#sv-settings .sv-set-buttons input { margin: 0 8px 0 0; }
+#sv-settings .sv-node-card { border: 1px solid rgba(128,128,128,.35); border-radius: 6px; padding: 10px 14px; margin: 0 0 12px; }
+#sv-settings .sv-node-head { font-size: 1.1em; }
+#sv-settings .sv-node-head .fa { margin-right: 6px; opacity: .8; }
+#sv-settings .sv-node-head select.sv-avail { float: right; margin: -3px 0 0; font-size: .9em; }
+#sv-settings table.sv-node-facts { width: auto; margin: 8px 0 2px; border-collapse: collapse; }
+#sv-settings table.sv-node-facts td { padding: 2px 22px 2px 0; vertical-align: top; white-space: nowrap; }
+#sv-settings .sv-node-warn { margin-top: 6px; padding: 5px 10px; border-radius: 4px; font-size: .95em; }
+#sv-settings .sv-node-warn-warn { background: rgba(255,152,0,.12); border-left: 3px solid #ff9800; }
+#sv-settings .sv-node-warn-bad { background: rgba(244,67,54,.12); border-left: 3px solid #f44336; }
+#sv-settings .sv-node-warn .fa { margin-right: 6px; }
+#sv-settings table.sv-feed { width: auto; border-collapse: collapse; }
+#sv-settings table.sv-feed td { padding: 3px 12px 3px 0; vertical-align: top; }
+
+/* Verwaiste Images ausblenden (Unraid setzt beim Ansichtswechsel display per Inline-Style – deshalb !important) */
+#docker_list tr.sv-orphan-hidden { display: none !important; }
+#docker_list tr.sv-orphan-sum td { padding: 6px 10px; }
+#docker_list tr.sv-orphan-sum a { color: inherit; text-decoration: none; }
+#docker_list tr.sv-orphan-sum a:hover { text-decoration: underline; }
+]]></INLINE>
+</FILE>
+<FILE Name="&plugdir;/include/actions.php">
+<INLINE><![CDATA[<?php
+/*
+ * Swarm View – Stack-Aktionen (nur POST; CSRF-Prüfung übernimmt Unraids local_prepend.php).
+ * action = create | get | save | deploy | remove | restart | delete
+ * Stack-Dateien: /boot/config/plugins/swarm-view/stacks/<name>/{docker-stack.yml,.env}
+ */
+require_once __DIR__ . '/common.php';
+header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store');
+
+function reply(bool $ok, array $extra = []): void {
+    echo json_encode(['ok' => $ok] + $extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') reply(false, ['error' => 'Nur POST erlaubt']);
+
+$action = $_POST['action'] ?? '';
+
+/* ---------- Service-/Task-Aktionen (unabhängig vom Stack-Ordner) ---------- */
+if ($action === 'logs') {
+    $task = $_POST['task'] ?? '';
+    if (!preg_match('/^[a-z0-9]{10,64}$/', $task)) reply(false, ['error' => 'Ungültige Task-ID']);
+    $tail = max(50, min(2000, (int)($_POST['tail'] ?? 300)));
+    [$rc, $out] = sv_run([$DOCKER, 'service', 'logs', '--no-task-ids', '--timestamps', '--tail', (string)$tail, $task], null, [], 30);
+    reply($rc === 0, ['log' => $out !== '' ? $out : '(keine Ausgabe)']);
+}
+if ($action === 'svc-restart') {
+    $svc = $_POST['service'] ?? '';
+    if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/', $svc)) reply(false, ['error' => 'Ungültiger Service-Name']);
+    [$rc, $out] = sv_run([$DOCKER, 'service', 'update', '--force', '--detach', $svc]);
+    reply($rc === 0, ['log' => $rc === 0 ? "$svc wird neu ausgerollt." : $out]);
+}
+
+if ($action === 'place') {
+    // Nur zur Laufzeit: der nächste "Stack Up" setzt wieder Constraints und Labels aus der docker-stack.yml
+    //   mode=''       → Automatisch: keine Node-Bindung, kein Vorzug
+    //   mode=fixed    → Fest: node.hostname==N (läuft nur dort, bei Ausfall gar nicht)
+    //   mode=prefer   → Bevorzugt: Label swarm-view.prefer=N; bei Ausfall läuft er woanders, der Wächter holt ihn zurück
+    $svc  = $_POST['service'] ?? '';
+    $node = $_POST['node'] ?? '';
+    $mode = $_POST['mode'] ?? ($node === '' ? '' : 'fixed');
+    if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/', $svc)) reply(false, ['error' => 'Ungültiger Service-Name']);
+    if (!in_array($mode, ['', 'fixed', 'prefer'], true)) reply(false, ['error' => 'Ungültiger Modus']);
+    if ($mode === '') $node = '';
+    elseif (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/', $node)) reply(false, ['error' => 'Ungültiger Node-Name']);
+
+    [$rc, $out] = sv_run([$DOCKER, 'service', 'inspect', $svc, '--format', '{{json .}}']);
+    $svcObj = $rc === 0 ? json_decode($out, true) : null;
+    $spec = $svcObj['Spec'] ?? null;
+    if (!is_array($spec)) reply(false, ['error' => "Service \"$svc\" nicht gefunden", 'log' => $out]);
+    if (isset($spec['Mode']['Global'])) reply(false, ['error' => 'Globale Services laufen auf allen Nodes']);
+
+    // Wächter-Zustand nur unter seiner Sperre ändern
+    @mkdir($STATE_DIR, 0755, true);
+    $lock = fopen("$STATE_DIR/monitor.lock", 'c');
+    if ($lock) flock($lock, LOCK_EX);
+    $state = sv_state_read('monitor');
+    unset($state['rebalance'][$svc]);
+
+    $cons = $spec['TaskTemplate']['Placement']['Constraints'] ?? [];
+    $hadPrefer = trim($spec['Labels']['swarm-view.prefer'] ?? '') !== '';
+    $args = [$DOCKER, 'service', 'update', '--detach'];
+    foreach ($cons as $c) {
+        if (sv_is_node_constraint($c)) array_push($args, '--constraint-rm', $c);
+    }
+    $log = [];
+    if ($mode === 'fixed') {
+        array_push($args, '--constraint-add', "node.hostname==$node");
+        if ($hadPrefer) array_push($args, '--label-rm', 'swarm-view.prefer');
+        $log[] = "$svc läuft jetzt fest auf $node.";
+    } elseif ($mode === 'prefer') {
+        array_push($args, '--label-add', "swarm-view.prefer=$node");
+        // Schon auf N? Dann nichts verschieben. Sonst sofort hinlegen (wie die Rückkehr des Wächters: Constraint, danach wieder weg)
+        [, $tout] = sv_run([$DOCKER, 'service', 'ps', $svc, '--filter', 'desired-state=running', '--format', '{{.Node}}|{{.CurrentState}}']);
+        $rows = array_filter(explode("\n", trim($tout)));
+        $onN = $rows && !array_filter($rows, fn($r) => !str_starts_with($r, "$node|Running"));
+        [, $nout] = sv_run([$DOCKER, 'node', 'inspect', $node, '--format', '{{.Status.State}}|{{.Spec.Availability}}']);
+        $ready = trim($nout) === 'ready|active';
+        if (!$onN && $ready) {
+            array_push($args, '--constraint-add', "node.hostname==$node");
+            $state['rebalance'][$svc] = ['since' => sv_now(), 'node' => $node];
+            $log[] = "$svc wird auf $node verlegt; bei einem Ausfall darf er woanders laufen.";
+        } elseif (!$ready) {
+            $log[] = "$node ist gerade nicht verfügbar – $svc bleibt, wo er ist, und wechselt zurück, sobald $node wieder stabil läuft.";
+        } else {
+            $log[] = "$svc läuft schon auf $node; bei einem Ausfall darf er woanders laufen.";
+        }
+        // Ohne Wächter keine Rückkehr → automatisch einschalten
+        $cfg = sv_cfg();
+        if ($cfg['REBALANCE'] !== 'yes') {
+            $cfg['REBALANCE'] = 'yes';
+            sv_cfg_write($cfg);
+            sv_cron_apply($cfg);
+            $log[] = 'Automatische Rückkehr in den Einstellungen eingeschaltet.';
+        }
+    } else {
+        if ($hadPrefer) array_push($args, '--label-rm', 'swarm-view.prefer');
+        $log[] = "$svc: Swarm entscheidet wieder selbst.";
+    }
+    if (count($args) === 4) {
+        sv_state_write('monitor', $state);
+        reply(true, ['log' => 'Keine Änderung nötig.']);
+    }
+    $args[] = $svc;
+    [$rc, $out] = sv_run($args, null, [], 60);
+    if ($rc !== 0) unset($state['rebalance'][$svc]);
+    sv_state_write('monitor', $state);
+    if ($lock) { flock($lock, LOCK_UN); fclose($lock); }
+    reply($rc === 0, $rc === 0 ? ['log' => implode("\n", $log)] : ['error' => 'service update fehlgeschlagen', 'log' => $out]);
+}
+
+if ($action === 'cleanup') {
+    $cfg = sv_cfg();
+    [$ok, $log] = sv_cleanup($cfg['CLEANUP_IMAGES'] === 'yes', 40);
+    reply($ok, ['log' => $log]);
+}
+
+if ($action === 'svc-update' || $action === 'svc-rollback') {
+    $svc = $_POST['service'] ?? '';
+    if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/', $svc)) reply(false, ['error' => 'Ungültiger Service-Name']);
+    if ($action === 'svc-rollback') {
+        [$rc, $out] = sv_run([$DOCKER, 'service', 'rollback', '--detach', $svc], null, [], 60);
+        reply($rc === 0, $rc === 0 ? ['log' => "$svc wird auf die vorherige Version zurückgesetzt."] : ['error' => 'Rollback fehlgeschlagen', 'log' => $out]);
+    }
+    [$rc, $img] = sv_run([$DOCKER, 'service', 'inspect', $svc, '--format', '{{.Spec.TaskTemplate.ContainerSpec.Image}}']);
+    if ($rc !== 0) reply(false, ['error' => "Service \"$svc\" nicht gefunden", 'log' => $img]);
+    $ref = preg_replace('/@[^@\/]+$/', '', trim($img));
+    // --image ohne Digest → Docker löst den aktuellen Digest der Registry auf
+    [$rc, $out] = sv_run([$DOCKER, 'service', 'update', '--detach', '--with-registry-auth', '--image', $ref, $svc], null, [], 120);
+    if ($rc === 0) {
+        $u = sv_state_read('updates');
+        if (isset($u['services'][$svc])) { $u['services'][$svc]['update'] = false; sv_state_write('updates', $u); }
+    }
+    reply($rc === 0, $rc === 0 ? ['log' => "$svc wird auf die neueste Version von $ref aktualisiert."] : ['error' => 'Update fehlgeschlagen', 'log' => $out]);
+}
+
+if ($action === 'update-check') {
+    require_once __DIR__ . '/updates.php';   // oberste Ebene → Unraids Docker-Klassen global verfügbar
+    $u = sv_check_updates();
+    $avail = array_keys(array_filter($u['services'], fn($x) => $x['update']));
+    $log = count($u['services']) . ' Services geprüft. ' . ($avail ? 'Updates verfügbar: ' . implode(', ', $avail) : 'Alles aktuell.');
+    if ($u['errors']) $log .= "\n\nNicht prüfbar:\n" . implode("\n", array_unique($u['errors']));
+    reply(true, ['log' => $log, 'checked' => $u['checked']]);
+}
+
+if ($action === 'notify-test') {
+    $ok = sv_notify('Test-Benachrichtigung', 'Swarm View kann dich benachrichtigen.', $_POST['level'] ?? 'normal');
+    reply($ok, $ok ? ['log' => 'Test-Benachrichtigung verschickt.'] : ['error' => 'notify-Skript fehlgeschlagen']);
+}
+
+if ($action === 'settings') {
+    $cfg = sv_cfg();
+    // Fehlende Felder behalten ihren bisherigen Wert
+    $pick = fn($k, array $allowed) => isset($_POST[$k]) && in_array($_POST[$k], $allowed, true) ? $_POST[$k] : $cfg[$k];
+    $in  = [
+        'REMOTE_ROWS'      => $pick('REMOTE_ROWS', ['always', 'advanced', 'never']),
+        'HOST_COLUMN'      => $pick('HOST_COLUMN', ['yes', 'no']),
+        'FOLDER_LOAD'      => $pick('FOLDER_LOAD', ['total', 'local']),
+        'ORPHAN_IMAGES'    => $pick('ORPHAN_IMAGES', ['show', 'swarm', 'hide']),
+        'SWARM_POSITION'   => $pick('SWARM_POSITION', ['top', 'middle', 'bottom']),
+        'REFRESH'          => isset($_POST['REFRESH']) ? (string)max(5, min(300, (int)$_POST['REFRESH'])) : $cfg['REFRESH'],
+        'DEPLOY_PRUNE'     => $pick('DEPLOY_PRUNE', ['yes', 'no']),
+        'CLEANUP_SCHEDULE' => $pick('CLEANUP_SCHEDULE', ['off', 'daily', 'weekly']),
+        'CLEANUP_IMAGES'   => $pick('CLEANUP_IMAGES', ['yes', 'no']),
+    ];
+    $yn = ['yes', 'no'];
+    $lvl = ['normal', 'warning', 'alert'];
+    $num = fn($k, $min, $max) => isset($_POST[$k]) && is_numeric($_POST[$k]) ? (string)max($min, min($max, (int)$_POST[$k])) : $cfg[$k];
+    $in += [
+        'UPDATE_CHECK'         => $pick('UPDATE_CHECK', $yn),
+        'UPDATE_INTERVAL'      => $num('UPDATE_INTERVAL', 1, 168),
+        'NOTIFY_ENABLED'       => $pick('NOTIFY_ENABLED', $yn),
+        'NOTIFY_NODE'          => $pick('NOTIFY_NODE', $yn),
+        'NOTIFY_NODE_DELAY'    => $num('NOTIFY_NODE_DELAY', 0, 120),
+        'NOTIFY_NODE_LEVEL'    => $pick('NOTIFY_NODE_LEVEL', $lvl),
+        'NOTIFY_CRASH'         => $pick('NOTIFY_CRASH', $yn),
+        'NOTIFY_CRASH_COUNT'   => $num('NOTIFY_CRASH_COUNT', 2, 50),
+        'NOTIFY_CRASH_WINDOW'  => $num('NOTIFY_CRASH_WINDOW', 2, 240),
+        'NOTIFY_CRASH_LEVEL'   => $pick('NOTIFY_CRASH_LEVEL', $lvl),
+        'NOTIFY_PENDING'       => $pick('NOTIFY_PENDING', $yn),
+        'NOTIFY_PENDING_DELAY' => $num('NOTIFY_PENDING_DELAY', 0, 240),
+        'NOTIFY_PENDING_LEVEL' => $pick('NOTIFY_PENDING_LEVEL', $lvl),
+        'NOTIFY_MOVED'         => $pick('NOTIFY_MOVED', $yn),
+        'NOTIFY_MOVED_LEVEL'   => $pick('NOTIFY_MOVED_LEVEL', $lvl),
+        'NOTIFY_UPDATES'       => $pick('NOTIFY_UPDATES', $yn),
+        'NOTIFY_UPDATES_LEVEL' => $pick('NOTIFY_UPDATES_LEVEL', $lvl),
+        'NOTIFY_RECOVERY'      => $pick('NOTIFY_RECOVERY', $yn),
+        'NOTIFY_REPEAT'        => $num('NOTIFY_REPEAT', 0, 168),
+        'NOTIFY_IGNORE'        => $cfg['NOTIFY_IGNORE'],
+        'REBALANCE'            => $pick('REBALANCE', $yn),
+        'REBALANCE_DELAY'      => $num('REBALANCE_DELAY', 1, 120),
+        'STATS'                => $pick('STATS', $yn),
+        'STATS_INTERVAL'       => $num('STATS_INTERVAL', 5, 300),
+    ];
+    if (isset($_POST['NOTIFY_IGNORE'])) {
+        $re = str_replace('"', '', trim((string)$_POST['NOTIFY_IGNORE']));
+        if ($re !== '' && @preg_match('~' . str_replace('~', '\~', $re) . '~', '') === false) {
+            reply(false, ['error' => 'Ungültiger regulärer Ausdruck bei „Services ignorieren“']);
+        }
+        $in['NOTIFY_IGNORE'] = $re;
+    }
+    if (!sv_cfg_write($in)) reply(false, ['error' => 'Einstellungen konnten nicht gespeichert werden']);
+    $log = ['Einstellungen gespeichert.', sv_cron_apply($in)];
+    $sw0 = sv_swarm_settings();
+    if ($sw0['active'] && $sw0['manager']) $log[] = sv_agent_apply($in);
+
+    // Swarm-Cluster-Werte nur bei Änderung anfassen
+    $sw = sv_swarm_settings();
+    if ($sw['active'] && $sw['manager']) {
+        $args = [$DOCKER, 'swarm', 'update'];
+        $hist = isset($_POST['HISTORY_LIMIT']) ? max(1, min(20, (int)$_POST['HISTORY_LIMIT'])) : null;
+        $hb   = isset($_POST['HEARTBEAT']) ? max(1, min(60, (int)$_POST['HEARTBEAT'])) : null;
+        if ($hist !== null && $hist !== $sw['historyLimit']) array_push($args, '--task-history-limit', (string)$hist);
+        if ($hb !== null && $hb !== $sw['heartbeat']) array_push($args, '--dispatcher-heartbeat', "{$hb}s");
+        if (count($args) > 3) {
+            [$rc, $out] = sv_run($args);
+            if ($rc !== 0) reply(false, ['error' => 'swarm update fehlgeschlagen', 'log' => implode("\n", $log) . "\n\n" . $out]);
+            if ($hist !== null && $hist !== $sw['historyLimit']) $log[] = "Task-Historie: $hist Container pro Service";
+            if ($hb !== null && $hb !== $sw['heartbeat']) $log[] = "Heartbeat: {$hb} s";
+        }
+    }
+    reply(true, ['log' => implode("\n", $log)]);
+}
+
+if ($action === 'node-availability') {
+    $node  = $_POST['node'] ?? '';
+    $avail = $_POST['availability'] ?? '';
+    if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/', $node)) reply(false, ['error' => 'Ungültiger Node']);
+    if (!in_array($avail, ['active', 'pause', 'drain'], true)) reply(false, ['error' => 'Ungültige Verfügbarkeit']);
+    [$rc, $out] = sv_run([$DOCKER, 'node', 'update', '--availability', $avail, $node]);
+    $txt = ['active' => 'aktiv', 'pause' => 'pausiert (keine neuen Container)', 'drain' => 'in Wartung (Container werden abgezogen)'][$avail];
+    reply($rc === 0, $rc === 0 ? ['log' => "$node ist jetzt $txt."] : ['error' => 'node update fehlgeschlagen', 'log' => $out]);
+}
+
+$name   = $_POST['name'] ?? '';
+if (!sv_valid_name($name)) reply(false, ['error' => 'Ungültiger Stack-Name – erlaubt: a-z, 0-9, - und _ (max. 63 Zeichen)']);
+
+$dir = "$STACK_ROOT/$name";
+$yml = "$dir/$STACK_FILE";
+$env = "$dir/.env";
+
+function normalize(string $s): string {
+    $s = str_replace(["\r\n", "\r"], "\n", $s);
+    return rtrim($s) === '' ? '' : rtrim($s) . "\n";
+}
+
+function deployed(string $name): bool {
+    global $DOCKER;
+    [$rc, $out] = sv_run([$DOCKER, 'stack', 'ls', '--format', '{{.Name}}']);
+    return $rc === 0 && in_array($name, explode("\n", $out), true);
+}
+
+function validate(): array {
+    global $DOCKER, $yml, $env, $dir, $STACK_FILE;
+    [$rc, $out] = sv_run([$DOCKER, 'stack', 'config', '-c', $STACK_FILE], $dir, sv_parse_env($env), 30);
+    if ($rc !== 0 && preg_match('/unknown command|is not a docker command/i', $out)) {
+        return [true, 'Hinweis: "docker stack config" nicht verfügbar – Datei nicht geprüft.'];
+    }
+    return [$rc === 0, $rc === 0 ? 'Datei ist gültig.' : $out];
+}
+
+$TEMPLATE = <<<YML
+# Swarm-Stack "%s"
+# Variablen aus der .env werden beim Deploy gesetzt (\${VAR}).
+# Unterschiede zu Compose: kein build:, container_name/depends_on werden ignoriert,
+# Neustart-Verhalten über deploy.restart_policy statt restart:.
+version: "3.8"
+
+services:
+  app:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      # placement:
+      #   constraints:
+      #     - node.hostname == raspberrypi   # nur auf dem Pi
+      #     - node.role == manager           # nur auf Unraid
+
+YML;
+
+switch ($action) {
+    case 'create':
+        if (is_dir($dir)) reply(false, ['error' => "Stack \"$name\" existiert bereits"]);
+        if (!@mkdir($dir, 0755, true)) reply(false, ['error' => "Ordner konnte nicht angelegt werden: $dir"]);
+        file_put_contents($yml, sprintf($TEMPLATE, $name));
+        file_put_contents($env, "# KEY=VALUE\n");
+        reply(true, ['yml' => file_get_contents($yml), 'env' => file_get_contents($env)]);
+
+    case 'get':
+        if (!is_file($yml)) reply(false, ['error' => "Stack \"$name\" wird nicht von Swarm View verwaltet"]);
+        reply(true, [
+            'yml'      => file_get_contents($yml),
+            'env'      => is_file($env) ? file_get_contents($env) : '',
+            'path'     => $dir,
+            'deployed' => deployed($name),
+        ]);
+
+    case 'describe':
+        if (!is_dir($dir)) reply(false, ['error' => "Stack \"$name\" existiert nicht"]);
+        $desc = trim(preg_replace('/\s+/u', ' ', (string)($_POST['description'] ?? '')));
+        if (mb_strlen($desc) > 300) reply(false, ['error' => 'Beschreibung ist zu lang (max. 300 Zeichen)']);
+        if ($desc === '') @unlink("$dir/description.txt");
+        elseif (file_put_contents("$dir/description.txt", $desc . "\n") === false) reply(false, ['error' => 'Beschreibung konnte nicht gespeichert werden']);
+        reply(true, ['description' => $desc]);
+
+    case 'save':
+        if (!is_dir($dir)) reply(false, ['error' => "Stack \"$name\" existiert nicht"]);
+        $ymlNew = normalize($_POST['yml'] ?? '');
+        if ($ymlNew === '') reply(false, ['error' => 'docker-stack.yml darf nicht leer sein']);
+        file_put_contents($yml, $ymlNew);
+        file_put_contents($env, normalize($_POST['env'] ?? ''));
+        [$valid, $log] = validate();
+        reply(true, ['valid' => $valid, 'log' => $log]);
+
+    case 'deploy':
+        if (!is_file($yml)) reply(false, ['error' => "Keine $STACK_FILE für \"$name\""]);
+        [$valid, $vlog] = validate();
+        if (!$valid) reply(false, ['error' => 'Stack-Datei ungültig', 'log' => $vlog]);
+
+        // Stack Up: Images nur auflösen, wenn sie sich in der Datei geändert haben (kein Neustart unveränderter Services)
+        // Update Stack: bei der Registry nach neuen Versionen schauen
+        $update = ($_POST['mode'] ?? '') === 'update';
+        $cmd = [$DOCKER, 'stack', 'deploy', '--detach=true', '--with-registry-auth', '--resolve-image', $update ? 'always' : 'changed'];
+        if (sv_cfg()['DEPLOY_PRUNE'] === 'yes') $cmd[] = '--prune';
+        array_push($cmd, '-c', $STACK_FILE, $name);
+        [$rc, $out] = sv_run($cmd, $dir, sv_parse_env($env), 300);
+        reply($rc === 0, ['log' => ($update ? "Update: neueste Image-Versionen werden geholt.\n" : '') . ($out ?: 'Deploy angestoßen.')]);
+
+    case 'remove':
+        [$rc, $out] = sv_run([$DOCKER, 'stack', 'rm', $name]);
+        reply($rc === 0, ['log' => $out]);
+
+    case 'restart':
+        [$rc, $out] = sv_run([$DOCKER, 'stack', 'services', $name, '--format', '{{.Name}}']);
+        if ($rc !== 0) reply(false, ['log' => $out]);
+        $log = [];
+        $ok = true;
+        foreach (array_filter(explode("\n", $out)) as $svc) {
+            [$r, $o] = sv_run([$DOCKER, 'service', 'update', '--force', '--detach', $svc]);
+            $ok = $ok && $r === 0;
+            $log[] = "$svc: " . ($r === 0 ? 'neu gestartet' : $o);
+        }
+        reply($ok, ['log' => implode("\n", $log) ?: 'Keine Services im Stack.']);
+
+    case 'delete':
+        if (deployed($name)) reply(false, ['error' => 'Stack ist noch deployt – erst "Stack Down"']);
+        if (!is_dir($dir)) reply(false, ['error' => "Stack \"$name\" existiert nicht"]);
+        [$rc, $out] = sv_run(['rm', '-rf', '--', $dir]);
+        reply($rc === 0, ['log' => $rc === 0 ? "Dateien von \"$name\" gelöscht." : $out]);
+
+    default:
+        reply(false, ['error' => 'Unbekannte Aktion']);
+}
+]]></INLINE>
+</FILE>
+<FILE Name="&plugdir;/include/api.php">
+<INLINE><![CDATA[<?php
+/*
+ * Swarm View – read-only API.
+ * Liefert Swarm-Status, Nodes, Stacks/Services/Tasks und lokale Nicht-Swarm-Container als JSON.
+ * Aufruf: GET /plugins/swarm-view/include/api.php
+ */
+header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store');
+
+require_once __DIR__ . '/common.php';
+$errors = [];
+
+/** Führt einen docker-Befehl aus. Gibt stdout zurück oder null (Fehlertext landet in $errors). */
+function dk(string $args, string $ctx): ?string {
+    global $DOCKER, $errors;
+    $out = [];
+    $rc = 0;
+    exec(escapeshellcmd($DOCKER) . ' ' . $args . ' 2>&1', $out, $rc);
+    $txt = implode("\n", $out);
+    if ($rc !== 0) {
+        $errors[] = "$ctx: " . trim($txt);
+        return null;
+    }
+    return $txt;
+}
+
+/** Parst Ausgabe von --format '{{json .}}' (ein JSON-Objekt pro Zeile). */
+function jsonLines(?string $txt): array {
+    if ($txt === null) return [];
+    $rows = [];
+    foreach (explode("\n", $txt) as $line) {
+        $line = trim($line);
+        if ($line === '') continue;
+        $d = json_decode($line, true);
+        if (is_array($d)) $rows[] = $d;
+    }
+    return $rows;
+}
+
+function jsonDoc(?string $txt): array {
+    if ($txt === null) return [];
+    $d = json_decode($txt, true);
+    return is_array($d) ? $d : [];
+}
+
+/** "a=b,c=d" aus `docker ps` → Map. Kommas in Werten bleiben erhalten, solange danach kein "key=" folgt. */
+function parseLabels(string $s): array {
+    $map = [];
+    if ($s === '') return $map;
+    foreach (preg_split('/,(?=[A-Za-z0-9_.\-\/]+=)/', $s) as $kv) {
+        $p = strpos($kv, '=');
+        if ($p === false) continue;
+        $map[substr($kv, 0, $p)] = substr($kv, $p + 1);
+    }
+    return $map;
+}
+
+function args(array $ids): string {
+    return implode(' ', array_map('escapeshellarg', $ids));
+}
+
+$hostname = gethostname() ?: 'Unraid';
+
+/* ---------- Swarm-Status ---------- */
+$info = jsonDoc(dk("info --format '{{json .Swarm}}'", 'docker info'));
+$swarm = [
+    'state'   => $info['LocalNodeState'] ?? 'unknown',
+    'manager' => !empty($info['ControlAvailable']),
+    'nodeId'  => $info['NodeID'] ?? '',
+    'historyLimit' => $info['Cluster']['Spec']['Orchestration']['TaskHistoryRetentionLimit'] ?? null,
+];
+$swarm['active'] = $swarm['state'] === 'active';
+
+$nodes  = [];
+$stacks = [];
+$selfHost = $hostname;
+
+if ($swarm['active'] && $swarm['manager']) {
+    /* ---------- Nodes ---------- */
+    $nodeIds = array_column(jsonLines(dk("node ls --format '{{json .}}'", 'node ls')), 'ID');
+    if ($nodeIds) {
+        foreach (jsonDoc(dk('node inspect ' . args($nodeIds), 'node inspect')) as $n) {
+            $isSelf = ($n['ID'] ?? '') === $swarm['nodeId'];
+            $h = $n['Description']['Hostname'] ?? ($n['ID'] ?? '?');
+            if ($isSelf) $selfHost = $h;
+            $nodes[] = [
+                'id'           => $n['ID'] ?? '',
+                'hostname'     => $h,
+                'self'         => $isSelf,
+                'role'         => $n['Spec']['Role'] ?? '',
+                'availability' => $n['Spec']['Availability'] ?? '',
+                'state'        => $n['Status']['State'] ?? '',
+                'addr'         => $n['Status']['Addr'] ?? '',
+                'leader'       => !empty($n['ManagerStatus']['Leader']),
+                'arch'         => $n['Description']['Platform']['Architecture'] ?? '',
+                'cpus'         => round(($n['Description']['Resources']['NanoCPUs'] ?? 0) / 1e9, 1),
+                'memGB'        => round(($n['Description']['Resources']['MemoryBytes'] ?? 0) / 1073741824, 1),
+                'engine'       => $n['Description']['Engine']['EngineVersion'] ?? '',
+                'labels'       => (object)($n['Spec']['Labels'] ?? []),
+            ];
+        }
+        // Self zuerst, Rest alphabetisch
+        usort($nodes, fn($a, $b) => [$b['self'], $a['hostname']] <=> [$a['self'], $b['hostname']]);
+    }
+
+    /* ---------- Services ---------- */
+    $svcLs = jsonLines(dk("service ls --format '{{json .}}'", 'service ls'));
+    if ($svcLs) {
+        // Verknüpfung über den Namen: `service ls` kürzt IDs immer auf 12 Zeichen, `inspect` liefert sie voll
+        $lsByName = array_column($svcLs, null, 'Name');
+        $svcArg = args(array_column($svcLs, 'ID'));
+        $services = [];
+
+        foreach (jsonDoc(dk("service inspect $svcArg", 'service inspect')) as $s) {
+            $name  = $s['Spec']['Name'] ?? '?';
+            $stack = $s['Spec']['Labels']['com.docker.stack.namespace'] ?? '';
+            $ls    = $lsByName[$name] ?? [];
+            $img   = $s['Spec']['TaskTemplate']['ContainerSpec']['Image'] ?? ($ls['Image'] ?? '');
+            $prevImg = $s['PreviousSpec']['TaskTemplate']['ContainerSpec']['Image'] ?? '';
+            $portList = array_map(fn($p) => [
+                'target'    => $p['TargetPort'] ?? 0,
+                'published' => $p['PublishedPort'] ?? 0,
+                'proto'     => $p['Protocol'] ?? 'tcp',
+            ], $s['Endpoint']['Ports'] ?? ($s['Spec']['EndpointSpec']['Ports'] ?? []));
+            $services[$name] = [
+                'id'          => $s['ID'] ?? '',
+                'name'        => $name,
+                'short'       => ($stack !== '' && str_starts_with($name, "{$stack}_")) ? substr($name, strlen($stack) + 1) : $name,
+                'stack'       => $stack,
+                'image'       => preg_replace('/@sha256:[0-9a-f]+$/i', '', $img),
+                // Ohne Registry-Digest = lokal gebautes Image (z. B. local/node-red-mcp) → nur auf Nodes, die es haben
+                'localImage'  => $img !== '' && strpos($img, '@') === false,
+                'mode'        => isset($s['Spec']['Mode']['Global']) ? 'global' : 'replicated',
+                'replicas'    => $ls['Replicas'] ?? '',
+                'desired'     => isset($s['Spec']['Mode']['Replicated']) ? (int)($s['Spec']['Mode']['Replicated']['Replicas'] ?? 0) : null,
+                'ports'       => implode(', ', array_map(fn($p) => $p['published'] ? "{$p['published']}→{$p['target']}/{$p['proto']}" : "{$p['target']}/{$p['proto']}", $portList)),
+                'constraints' => $s['Spec']['TaskTemplate']['Placement']['Constraints'] ?? [],
+                'platforms'   => array_values(array_unique(array_filter(array_map(
+                    fn($p) => $p['Architecture'] ?? '',
+                    $s['Spec']['TaskTemplate']['Placement']['Platforms'] ?? []
+                )))),
+                'labels'      => (object)($s['Spec']['TaskTemplate']['ContainerSpec']['Labels'] ?? []),
+                'prefer'      => trim($s['Spec']['Labels']['swarm-view.prefer'] ?? ''),
+                // Anzeigename in Unraids Liste (Ersatz für container_name, das Swarm ignoriert)
+                'alias'       => mb_substr(trim($s['Spec']['TaskTemplate']['ContainerSpec']['Labels']['swarm-view.name'] ?? ($s['Spec']['Labels']['swarm-view.name'] ?? '')), 0, 64),
+                // Rollback nur anbieten, wenn sich die Image-Version geändert hat (nicht bei Platzierung, Labels …)
+                'canRollback' => $prevImg !== '' && $prevImg !== $img,
+                'rollbackTo'  => $prevImg !== '' && $prevImg !== $img ? sv_short_ref($prevImg) : '',
+                'internal'    => !empty($s['Spec']['Labels']['swarm-view.agent']) || !empty($s['Spec']['Labels']['swarm-view.cleanup']),
+                'mounts'      => array_map(fn($m) => [
+                    'type'   => $m['Type'] ?? '',
+                    'source' => $m['Source'] ?? '',
+                    'target' => $m['Target'] ?? '',
+                    'ro'     => !empty($m['ReadOnly']),
+                ], $s['Spec']['TaskTemplate']['ContainerSpec']['Mounts'] ?? []),
+                'portList'    => $portList,
+                'tasks'       => [],
+            ];
+        }
+
+        /* ---------- Tasks (wo läuft was) ---------- */
+        $tasks = jsonLines(dk("service ps $svcArg --no-trunc --filter desired-state=running --format '{{json .}}'", 'service ps'));
+        foreach ($tasks as $t) {
+            $tn  = $t['Name'] ?? '';
+            $dot = strrpos($tn, '.');
+            $sn  = $dot === false ? $tn : substr($tn, 0, $dot);
+            if (!isset($services[$sn])) continue;
+            $node = $t['Node'] ?? '';
+            $services[$sn]['tasks'][] = [
+                'id'      => $t['ID'] ?? '',
+                'slot'    => $dot === false ? '' : substr(substr($tn, $dot + 1), 0, 12),
+                'node'    => $node,
+                'local'   => $node !== '' && $node === $selfHost,
+                'current' => $t['CurrentState'] ?? '',
+                'error'   => $t['Error'] ?? '',
+            ];
+        }
+
+        /* ---------- Details der Tasks auf anderen Nodes: Zeiten, Netzwerke, Container-ID (ein Aufruf) ---------- */
+        $remoteIds = [];
+        foreach ($services as $sv) foreach ($sv['tasks'] as $t) if ($t['id'] !== '' && !$t['local'] && $t['node'] !== '') $remoteIds[] = $t['id'];
+        $detail = [];
+        if ($remoteIds) {
+            foreach (array_chunk($remoteIds, 60) as $chunk) {
+                [, $o] = sv_run(array_merge([$DOCKER, 'inspect', '--type', 'task'], $chunk), null, [], 20);
+                foreach ((json_decode(substr($o, (int)strpos($o, '[')), true) ?: []) as $ti) {
+                    $nets = [];
+                    foreach ($ti['NetworksAttachments'] ?? [] as $na) {
+                        $nets[] = [
+                            'name' => $na['Network']['Spec']['Name'] ?? '',
+                            'addr' => preg_replace('#/\d+$#', '', $na['Addresses'][0] ?? ''),
+                        ];
+                    }
+                    $detail[$ti['ID'] ?? ''] = [
+                        'created'     => $ti['CreatedAt'] ?? '',
+                        'since'       => $ti['Status']['Timestamp'] ?? '',
+                        'containerId' => substr($ti['Status']['ContainerStatus']['ContainerID'] ?? '', 0, 12),
+                        'networks'    => $nets,
+                    ];
+                }
+            }
+        }
+        foreach ($services as &$sv) foreach ($sv['tasks'] as &$t) if (isset($detail[$t['id']])) $t += $detail[$t['id']];
+        unset($sv, $t);
+
+        // Node-Auswahl: aktuell per Constraint festgelegter Node ('' = Swarm entscheidet)
+        $updates = sv_state_read('updates');
+        $rebal = sv_state_read('monitor')['rebalance'] ?? [];
+        foreach ($services as &$svc) {
+            $svc['placeNode'] = isset($rebal[$svc['name']]) ? '' : sv_constraint_node($svc['constraints']);
+            $svc['rebalancing'] = isset($rebal[$svc['name']]);
+            $u = $updates['services'][$svc['name']] ?? null;
+            $svc['update'] = $u ? (bool)$u['update'] : null;
+            // Replicas: aus `service ls`; fehlt der Wert, aus den Tasks rechnen
+            if (!preg_match('/^\d+\/\d+/', (string)$svc['replicas'])) {
+                $run = count(array_filter($svc['tasks'], fn($t) => stripos($t['current'], 'Running') === 0));
+                $want = $svc['desired'] ?? count($svc['tasks']);
+                $svc['replicas'] = "$run/$want";
+            }
+        }
+        unset($svc);
+        // Interne Hilfs-Services (Agent, Aufräum-Job) nicht als Stacks anzeigen
+        $services = array_filter($services, fn($x) => !$x['internal']);
+
+        foreach ($services as $svc) {
+            $key = $svc['stack'] !== '' ? $svc['stack'] : '(ohne Stack)';
+            $stacks[$key][] = $svc;
+        }
+        uksort($stacks, fn($a, $b) => [$a === '(ohne Stack)', $a] <=> [$b === '(ohne Stack)', $b]);
+        $stacks = array_map(
+            fn($name, $svcs) => ['name' => $name, 'services' => array_values(
+                (function ($l) { usort($l, fn($a, $b) => strcmp($a['short'], $b['short'])); return $l; })($svcs)
+            )],
+            array_keys($stacks), array_values($stacks)
+        );
+    }
+}
+
+/* ---------- CPU/RAM aus dem Agent ---------- */
+$cfgAll = sv_cfg();
+$stats = ['enabled' => $cfgAll['STATS'] === 'yes', 'nodes' => (object)[], 'tasks' => (object)[]];
+if ($stats['enabled'] && $swarm['active'] && $swarm['manager']) {
+    $tasksStats = [];
+    $nodeStats = [];
+    foreach (sv_agent_read((int)$cfgAll['STATS_INTERVAL']) as $host => $d) {
+        $mt = (int)($d['memTotal'] ?? 0);
+        $nodeStats[$host] = [
+            'cpu'   => round(($d['cpu'] ?? 0) / 10, 1),
+            'mem'   => $mt ? round(100 * ($mt - (int)($d['memAvail'] ?? 0)) / $mt, 1) : null,
+            'memGB' => round($mt / 1048576, 1),
+            'stale' => !empty($d['stale']),
+            'ncpu'  => (int)($d['ncpu'] ?? 0),
+            'ts'    => (int)($d['ts'] ?? 0),
+        ];
+        if (!empty($d['stale'])) continue; // Container-Werte eines veralteten Standes nicht als aktuell zeigen
+        foreach ($d['stats'] ?? [] as $c) {
+            // Containername eines Swarm-Tasks: <service>.<slot>.<task-id>
+            $nm = $c['Name'] ?? '';
+            $tid = substr($nm, (int)strrpos($nm, '.') + 1);
+            if (strlen($tid) < 20) continue;
+            $mem = $c['MemUsage'] ?? '';
+            $approx = false;
+            // Node ohne Speicher-cgroup: Ersatzwert aus der RSS-Summe der Container-Prozesse
+            if (preg_match('#^0B\s*/\s*0B$#', trim($mem)) && isset($d['rss'][$nm])) {
+                $mem = sprintf('%.2fMiB / %.2fGiB', $d['rss'][$nm] / 1024, (int)($d['memTotal'] ?? 0) / 1048576);
+                $approx = true;
+            }
+            $tasksStats[$tid] = ['cpu' => $c['CPUPerc'] ?? '', 'mem' => $mem, 'memPerc' => $c['MemPerc'] ?? '', 'node' => $host,
+                                 'ncpu' => (int)($d['ncpu'] ?? 0), 'memTotal' => (int)($d['memTotal'] ?? 0) * 1024, 'memApprox' => $approx];
+        }
+    }
+    $stats['nodes'] = (object)$nodeStats;
+    $stats['tasks'] = (object)$tasksStats;
+}
+
+/* ---------- Lokale Container (für die Host-Spalte in Unraids Tabelle) ---------- */
+$containers = [];
+foreach (jsonLines(dk("ps -a --format '{{json .}}'", 'docker ps')) as $c) {
+    $labels = parseLabels($c['Labels'] ?? '');
+    $containers[$c['Names'] ?? ''] = [
+        'swarmStack'   => $labels['com.docker.stack.namespace'] ?? '',
+        'swarmService' => $labels['com.docker.swarm.service.name'] ?? '',
+        'compose'      => $labels['com.docker.compose.project'] ?? '',
+    ];
+}
+
+echo json_encode([
+    'ok'         => empty($errors),
+    'host'       => $selfHost,
+    'swarm'      => $swarm,
+    'nodes'      => $nodes,
+    'stacks'     => $stacks,
+    'containers' => (object)$containers,
+    'managed'    => sv_managed_stacks(),
+    'stackInfo'  => (object)array_combine(sv_managed_stacks(), array_map(fn($n) => [
+        'path'        => "$STACK_ROOT/$n",
+        'description' => is_file("$STACK_ROOT/$n/description.txt") ? trim((string)file_get_contents("$STACK_ROOT/$n/description.txt")) : '',
+    ], sv_managed_stacks())),
+    'stats'      => $stats,
+    'updates'    => ['enabled' => $cfgAll['UPDATE_CHECK'] === 'yes', 'checked' => sv_state_read('updates')['checked'] ?? null],
+    'config'     => (function () { $c = sv_cfg(); return [
+        'remoteRows' => $c['REMOTE_ROWS'],
+        'hostColumn' => $c['HOST_COLUMN'] === 'yes',
+        'folderLoad' => $c['FOLDER_LOAD'],
+        'orphans'    => $c['ORPHAN_IMAGES'],
+        'rebalance'  => $c['REBALANCE'] === 'yes',
+        'rebalanceDelay' => (int)$c['REBALANCE_DELAY'],
+        'refresh'    => (int)$c['REFRESH'],
+    ]; })(),
+    'errors'   => $errors,
+    'time'     => date('H:i:s'),
+], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+]]></INLINE>
+</FILE>
+<FILE Name="&plugdir;/include/common.php">
+<INLINE><![CDATA[<?php
+/* Swarm View – gemeinsame Helfer für api.php und actions.php */
+
+// Über $GLOBALS, weil Unraid .page-Dateien innerhalb einer Funktion rendert
+$GLOBALS['DOCKER']     = getenv('SV_DOCKER') ?: '/usr/bin/docker';
+$GLOBALS['STACK_ROOT'] = getenv('SV_STACK_ROOT') ?: '/boot/config/plugins/swarm-view/stacks';
+$GLOBALS['STACK_FILE'] = 'docker-stack.yml';
+$GLOBALS['CFG_FILE']   = getenv('SV_CFG') ?: '/boot/config/plugins/swarm-view/swarm-view.cfg';
+$GLOBALS['CRON_FILE']  = dirname($GLOBALS['CFG_FILE']) . '/cleanup.cron';
+$GLOBALS['STATE_DIR']  = getenv('SV_STATE') ?: '/tmp/swarm-view';
+$GLOBALS['NOTIFY']     = getenv('SV_NOTIFY') ?: '/usr/local/emhttp/plugins/dynamix/scripts/notify';
+const SV_AGENT = 'swarm-view-agent';
+
+/** Aktuelle Zeit (in Tests per SV_NOW überschreibbar) */
+function sv_now(): int {
+    return (int)(getenv('SV_NOW') ?: time());
+}
+
+/** Plugin-Einstellungen mit Standardwerten */
+const SV_DEFAULTS = [
+    'REMOTE_ROWS'      => 'always',  // always | advanced | never
+    'HOST_COLUMN'      => 'yes',
+    'SWARM_POSITION'   => 'bottom', // top | middle | bottom – Lage der Swarm-Leiste auf der Docker-Seite
+    'ORPHAN_IMAGES'    => 'swarm', // show | swarm | hide – verwaiste Images in Unraids Liste
+    'FOLDER_LOAD'      => 'total', // total | local – CPU/RAM der Folder-View-Ordner
+    'REFRESH'          => '15',      // Sekunden
+    'DEPLOY_PRUNE'     => 'yes',
+    'CLEANUP_SCHEDULE' => 'off',     // off | daily | weekly
+    'CLEANUP_IMAGES'   => 'yes',
+
+    // Update-Hinweise
+    'UPDATE_CHECK'     => 'no',
+    'UPDATE_INTERVAL'  => '12',      // Stunden
+
+    // Benachrichtigungen
+    'NOTIFY_ENABLED'       => 'no',
+    'NOTIFY_NODE'          => 'yes',
+    'NOTIFY_NODE_DELAY'    => '2',       // Minuten offline, bevor gemeldet wird
+    'NOTIFY_NODE_LEVEL'    => 'alert',
+    'NOTIFY_CRASH'         => 'yes',
+    'NOTIFY_CRASH_COUNT'   => '3',       // Fehlstarts …
+    'NOTIFY_CRASH_WINDOW'  => '10',      // … innerhalb von Minuten
+    'NOTIFY_CRASH_LEVEL'   => 'warning',
+    'NOTIFY_PENDING'       => 'yes',
+    'NOTIFY_PENDING_DELAY' => '5',       // Minuten nicht platzierbar
+    'NOTIFY_PENDING_LEVEL' => 'warning',
+    'NOTIFY_MOVED'         => 'no',      // Service ist auf anderen Node ausgewichen / zurückgekehrt
+    'NOTIFY_MOVED_LEVEL'   => 'normal',
+    'NOTIFY_UPDATES'       => 'yes',
+    'NOTIFY_UPDATES_LEVEL' => 'normal',
+    'NOTIFY_RECOVERY'      => 'yes',     // Entwarnung, wenn ein Problem behoben ist
+    'NOTIFY_REPEAT'        => '0',       // Stunden bis zur Erinnerung (0 = nie)
+    'NOTIFY_IGNORE'        => '',        // Regex für Service-Namen, die ignoriert werden
+
+    // Bevorzugter Node
+    'REBALANCE'        => 'no',
+    'REBALANCE_DELAY'  => '5',       // Minuten, die der bevorzugte Node stabil sein muss
+
+    // CPU/RAM-Agent
+    'STATS'            => 'no',
+    'STATS_INTERVAL'   => '10',      // Sekunden
+];
+
+function sv_cfg(): array {
+    global $CFG_FILE;
+    $c = is_file($CFG_FILE) ? (@parse_ini_file($CFG_FILE, false, INI_SCANNER_RAW) ?: []) : [];
+    return array_merge(SV_DEFAULTS, array_intersect_key($c, SV_DEFAULTS));
+}
+
+function sv_cfg_write(array $cfg): bool {
+    global $CFG_FILE;
+    @mkdir(dirname($CFG_FILE), 0755, true);
+    $out = '';
+    foreach (array_merge(SV_DEFAULTS, array_intersect_key($cfg, SV_DEFAULTS)) as $k => $v) {
+        $out .= $k . '="' . str_replace('"', '', (string)$v) . "\"\n";
+    }
+    $ok = file_put_contents($CFG_FILE, $out) !== false;
+    sv_menu_write($cfg['SWARM_POSITION'] ?? SV_DEFAULTS['SWARM_POSITION']);
+    return $ok;
+}
+
+/**
+ * Lage der Swarm-Leiste auf der Docker-Seite. SwarmView.page liest ihren Menu-Rang per
+ *   Menu="/boot/config/plugins/swarm-view/menu.cfg MENU=Docker:3"
+ * aus dieser Datei (Unraids PageBuilder: get_file_key). Sortiert wird natürlich nach "<Rang><Seitenname>":
+ *   Docker:0 → vor "1DockerContainers" · Docker:1 → nach "1DockerContainers" ("S" > "D"), vor Compose (Rang 2) · Docker:3 → ans Ende
+ */
+function sv_menu_write(string $pos): void {
+    global $CFG_FILE;
+    $rank = ['top' => '0', 'middle' => '1', 'bottom' => '3'][$pos] ?? '3';
+    @file_put_contents(dirname($CFG_FILE) . '/menu.cfg', "MENU=\"Docker:$rank\"\n");
+}
+
+/** Gültiger Stack-Name? (wird auch als Ordnername und Service-Präfix benutzt) */
+function sv_valid_name(string $n): bool {
+    return (bool)preg_match('/^[a-z0-9][a-z0-9_-]{0,62}$/', $n);
+}
+
+/** Namen aller von Swarm View verwalteten Stacks (Ordner mit docker-stack.yml) */
+function sv_managed_stacks(): array {
+    global $STACK_ROOT, $STACK_FILE;
+    $out = [];
+    foreach (glob("$STACK_ROOT/*/$STACK_FILE") ?: [] as $f) {
+        $n = basename(dirname($f));
+        if (sv_valid_name($n)) $out[] = $n;
+    }
+    sort($out);
+    return $out;
+}
+
+/** .env (KEY=VALUE) parsen – Kommentare, "export ", Anführungszeichen werden behandelt */
+function sv_parse_env(string $file): array {
+    $env = [];
+    if (!is_file($file)) return $env;
+    foreach (file($file, FILE_IGNORE_NEW_LINES) as $line) {
+        $line = trim($line);
+        if ($line === '' || $line[0] === '#') continue;
+        if (str_starts_with($line, 'export ')) $line = trim(substr($line, 7));
+        $p = strpos($line, '=');
+        if ($p === false) continue;
+        $k = trim(substr($line, 0, $p));
+        $v = trim(substr($line, $p + 1));
+        if (strlen($v) >= 2 && ($v[0] === '"' || $v[0] === "'") && $v[-1] === $v[0]) $v = substr($v, 1, -1);
+        if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $k)) $env[$k] = $v;
+    }
+    return $env;
+}
+
+/**
+ * Befehl ohne Shell ausführen (Array-Form → kein Quoting-Problem).
+ * @return array [returncode, kombinierte Ausgabe]
+ */
+function sv_run(array $cmd, ?string $cwd = null, array $extraEnv = [], int $timeout = 120): array {
+    $env = array_merge(getenv(), $extraEnv);
+    $p = proc_open($cmd, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['redirect', 1]], $pipes, $cwd, $env);
+    if (!is_resource($p)) return [127, 'Konnte Befehl nicht starten: ' . implode(' ', $cmd)];
+    fclose($pipes[0]);
+    stream_set_blocking($pipes[1], false);
+    $out = '';
+    $start = time();
+    while (true) {
+        $chunk = fread($pipes[1], 8192);
+        if ($chunk !== false && $chunk !== '') { $out .= $chunk; continue; }
+        $st = proc_get_status($p);
+        if (!$st['running']) { $out .= stream_get_contents($pipes[1]); break; }
+        if (time() - $start > $timeout) { proc_terminate($p); $out .= "\n[Timeout nach {$timeout}s]"; break; }
+        usleep(50000);
+    }
+    fclose($pipes[1]);
+    $rc = proc_close($p);
+    if (isset($st) && !$st['running'] && $st['exitcode'] !== -1) $rc = $st['exitcode'];
+    return [$rc, trim($out)];
+}
+
+/* ---------- Node-Auswahl (nur Laufzeit, bis zum nächsten Stack Up) ---------- */
+
+/** Constraints, die einen Service an einen Node binden (hostname/role/id) */
+function sv_is_node_constraint(string $c): bool {
+    return (bool)preg_match('/^\s*node\.(hostname|role|id)\s*(==|!=)/', $c);
+}
+
+/** Node aus einer hostname-Constraint ("node.hostname == X" in beliebiger Schreibweise) */
+function sv_constraint_node(array $cons): string {
+    foreach ($cons as $c) {
+        if (preg_match('/^\s*node\.hostname\s*==\s*(\S+)\s*$/', $c, $m)) return $m[1];
+    }
+    return '';
+}
+
+/* ---------- Aufräumen (Button, Einstellungen und Cron) ---------- */
+
+/**
+ * Startet auf jedem Node einen Einmal-Job, der gestoppte Swarm-Container
+ * (und optional verwaiste Images) löscht. Wartet max. $wait Sekunden.
+ * @return array [ok, log]
+ */
+function sv_cleanup(bool $images, int $wait = 40): array {
+    global $DOCKER;
+    $job = 'swarm-view-cleanup';
+    sv_run([$DOCKER, 'service', 'rm', $job]);   // Reste eines früheren Laufs
+    sleep(1);
+    $cmd = 'echo "== $(hostname)"; docker container prune -f --filter label=com.docker.swarm.service.id';
+    if ($images) $cmd .= '; docker image prune -f';
+    [$rc, $out] = sv_run([
+        $DOCKER, 'service', 'create', '--detach', '--name', $job, '--mode', 'global-job',
+        '--mount', 'type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock',
+        '--label', 'swarm-view.cleanup=1', '--hostname', '{{.Node.Hostname}}',
+        'docker:cli', 'sh', '-c', $cmd,
+    ], null, [], 60);
+    if ($rc !== 0) return [false, "Aufräum-Job konnte nicht gestartet werden:\n$out"];
+
+    $done = false;
+    for ($i = 0; $i < max(1, intdiv($wait, 2)) && !$done; $i++) {
+        sleep(2);
+        [$prc, $ps] = sv_run([$DOCKER, 'service', 'ps', $job, '--format', '{{.CurrentState}}']);
+        $states = array_filter(explode("\n", $ps));
+        $done = $prc === 0 && $states && !array_filter($states, fn($st) => !preg_match('/^(Complete|Failed|Rejected|Shutdown)/i', $st));
+    }
+    [, $jl] = sv_run([$DOCKER, 'service', 'logs', '--no-task-ids', '--raw', $job], null, [], 20);
+    if ($done) {
+        sv_run([$DOCKER, 'service', 'rm', $job]);
+        return [true, "Aufräum-Job auf allen Nodes fertig:\n\n" . trim($jl)];
+    }
+    return [true, "Aufräum-Job läuft noch (z. B. Image-Download auf dem Pi) – er wird beim nächsten Aufräumen entfernt. Bisherige Ausgabe:\n\n" . trim($jl)];
+}
+
+/** Cron-Datei schreiben: Aufräumen nach Zeitplan + Wächter jede Minute (wenn eine Wächter-Funktion aktiv ist) */
+function sv_cron_apply(array $cfg): string {
+    global $CRON_FILE;
+    $lines = ['# Swarm View'];
+    $msg = [];
+    $when = ['daily' => '17 4 * * *', 'weekly' => '17 4 * * 0'][$cfg['CLEANUP_SCHEDULE']] ?? '';
+    if ($when) {
+        $lines[] = "$when /usr/bin/php -q /usr/local/emhttp/plugins/swarm-view/scripts/cleanup.php > /dev/null 2>&1";
+        $msg[] = "Automatisches Aufräumen: {$cfg['CLEANUP_SCHEDULE']} (04:17)";
+    } else {
+        $msg[] = 'Automatisches Aufräumen: aus';
+    }
+    if (sv_monitor_needed($cfg)) {
+        $lines[] = "* * * * * /usr/bin/php -q /usr/local/emhttp/plugins/swarm-view/scripts/monitor.php > /dev/null 2>&1";
+        $msg[] = 'Hintergrund-Wächter: aktiv (jede Minute)';
+    }
+    if (count($lines) > 1) file_put_contents($CRON_FILE, implode("\n", $lines) . "\n"); else @unlink($CRON_FILE);
+    if (is_executable('/usr/local/sbin/update_cron')) exec('/usr/local/sbin/update_cron');
+    return implode("\n", $msg);
+}
+
+function sv_monitor_needed(array $cfg): bool {
+    return $cfg['NOTIFY_ENABLED'] === 'yes' || $cfg['UPDATE_CHECK'] === 'yes' || $cfg['REBALANCE'] === 'yes';
+}
+
+/* ---------- Zustand (RAM, /tmp) ---------- */
+
+function sv_state_read(string $name): array {
+    global $STATE_DIR;
+    $f = "$STATE_DIR/$name.json";
+    $d = is_file($f) ? json_decode((string)file_get_contents($f), true) : null;
+    return is_array($d) ? $d : [];
+}
+
+function sv_state_write(string $name, array $data): void {
+    global $STATE_DIR;
+    @mkdir($STATE_DIR, 0755, true);
+    $tmp = "$STATE_DIR/.$name.json." . getmypid();
+    file_put_contents($tmp, json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    rename($tmp, "$STATE_DIR/$name.json");
+}
+
+/* ---------- Unraid-Benachrichtigung ---------- */
+
+function sv_notify(string $subject, string $desc, string $level = 'normal', string $message = ''): bool {
+    global $NOTIFY;
+    if (!in_array($level, ['normal', 'warning', 'alert'], true)) $level = 'normal';
+    $args = [$NOTIFY, '-e', 'Swarm View', '-s', $subject, '-d', $desc, '-i', $level, '-l', '/Docker'];
+    if ($message !== '') array_push($args, '-m', $message);
+    [$rc] = sv_run($args, null, [], 20);
+    return $rc === 0;
+}
+
+/* ---------- CPU/RAM-Agent (globaler Service, Ausgabe über service logs) ---------- */
+
+/** Shell-Schleife des Agents: Node-CPU/RAM aus /proc + docker stats, eine JSON-Zeile pro Durchlauf */
+function sv_agent_script(): string {
+    return <<<'SH'
+ptot=""; pidle=""
+while true; do
+  set -- $(head -n1 /proc/stat); shift
+  tot=0; for v in "$@"; do tot=$((tot + v)); done
+  idle=$(($4 + $5)); cpu=0
+  if [ -n "$ptot" ] && [ $((tot - ptot)) -gt 0 ]; then cpu=$((1000 * ((tot - ptot) - (idle - pidle)) / (tot - ptot))); fi
+  ptot=$tot; pidle=$idle
+  mt=$(awk '/^MemTotal:/{print $2}' /proc/meminfo); ma=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
+  st=$(docker stats --no-stream --format '{{json .}}' 2>/dev/null | paste -sd, -)
+  # Ohne Speicher-cgroup (Raspberry Pi) meldet docker stats "0B / 0B" – dann RSS der Prozesse je Container zählen (KiB)
+  rss=""
+  case "$st" in *'"MemUsage":"0B / 0B"'*)
+    for n in $(docker ps --format '{{.Names}}'); do
+      kb=$(docker top "$n" -o pid,rss 2>/dev/null | awk 'NR>1{s+=$2} END{print s+0}')
+      rss="$rss${rss:+,}\"$n\":${kb:-0}"
+    done;;
+  esac
+  echo "{\"node\":\"$NODE\",\"ts\":$(date +%s),\"cpu\":$cpu,\"ncpu\":$(nproc),\"memTotal\":$mt,\"memAvail\":$ma,\"stats\":[$st],\"rss\":{$rss}}"
+  sleep "$INTERVAL"
+done
+SH;
+}
+
+/** Agent je nach Einstellung anlegen, aktualisieren oder entfernen */
+const SV_AGENT_VERSION = '2'; // bei Änderungen am Agent-Skript erhöhen → Agent wird neu angelegt
+
+function sv_agent_apply(array $cfg): string {
+    global $DOCKER;
+    $want = $cfg['STATS'] === 'yes';
+    $interval = (string)max(5, min(300, (int)$cfg['STATS_INTERVAL']));
+    [$rc, $out] = sv_run([$DOCKER, 'service', 'inspect', SV_AGENT, '--format', '{{index .Spec.Labels "swarm-view.agent.interval"}}/{{index .Spec.Labels "swarm-view.agent.version"}}']);
+    $exists = $rc === 0;
+    if (!$want) {
+        if ($exists) sv_run([$DOCKER, 'service', 'rm', SV_AGENT]);
+        return 'CPU/RAM-Agent: aus';
+    }
+    if ($exists && trim($out) === "$interval/" . SV_AGENT_VERSION) return "CPU/RAM-Agent: aktiv (alle {$interval} s)";
+    if ($exists) sv_run([$DOCKER, 'service', 'rm', SV_AGENT]);
+    [$rc, $out] = sv_run([
+        $DOCKER, 'service', 'create', '--detach', '--name', SV_AGENT, '--mode', 'global',
+        '--mount', 'type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock',
+        '--env', 'NODE={{.Node.Hostname}}', '--env', "INTERVAL=$interval",
+        '--hostname', '{{.Node.Hostname}}',
+        '--label', 'swarm-view.agent=1', '--label', "swarm-view.agent.interval=$interval", '--label', 'swarm-view.agent.version=' . SV_AGENT_VERSION,
+        '--log-driver', 'json-file', '--log-opt', 'max-size=256k', '--log-opt', 'max-file=1',
+        '--limit-memory', '64M', '--restart-condition', 'any',
+        'docker:cli', 'sh', '-c', sv_agent_script(),
+    ], null, [], 60);
+    return $rc === 0 ? "CPU/RAM-Agent: gestartet (alle {$interval} s)" : "CPU/RAM-Agent konnte nicht gestartet werden:\n$out";
+}
+
+/** Letzte Messwerte aller Nodes aus den Agent-Logs */
+function sv_agent_read(int $interval): array {
+    global $DOCKER;
+    // Ist ein Node nicht erreichbar, endet "service logs" mit Fehler – die Zeilen der übrigen Nodes stehen trotzdem in der Ausgabe.
+    // Deshalb den Rückgabewert ignorieren und alles auswerten, was als JSON lesbar ist.
+    [, $out] = sv_run([$DOCKER, 'service', 'logs', '--raw', '--tail', '1', SV_AGENT], null, [], 15);
+    $nodes = [];
+    foreach (explode("\n", $out) as $line) {
+        $d = json_decode(trim($line), true);
+        if (!is_array($d) || empty($d['node'])) continue;
+        if (isset($nodes[$d['node']]) && $nodes[$d['node']]['ts'] >= ($d['ts'] ?? 0)) continue;
+        $nodes[$d['node']] = $d;
+    }
+    // Letzte bekannte Werte je Node merken: fehlt ein Node (aus, neu gestartet), bleiben seine Werte als „veraltet“ sichtbar
+    $cache = sv_state_read('agent');
+    foreach ($nodes as $n => $d) $cache[$n] = $d;
+    foreach ($cache as $n => $d) if (time() - (int)($d['ts'] ?? 0) > 86400) unset($cache[$n]);
+    if ($nodes) sv_state_write('agent', $cache);
+    foreach ($cache as $n => &$d) $d['stale'] = (time() - (int)($d['ts'] ?? 0)) > 3 * $interval + 10;
+    unset($d);
+    return $cache;
+}
+
+/** Swarm-Cluster-Werte aus docker info */
+function sv_swarm_settings(): array {
+    global $DOCKER;
+    [$rc, $out] = sv_run([$DOCKER, 'info', '--format', '{{json .Swarm}}']);
+    $sw = $rc === 0 ? (json_decode($out, true) ?: []) : [];
+    $spec = $sw['Cluster']['Spec'] ?? [];
+    return [
+        'active'       => ($sw['LocalNodeState'] ?? '') === 'active',
+        'manager'      => !empty($sw['ControlAvailable']),
+        'historyLimit' => $spec['Orchestration']['TaskHistoryRetentionLimit'] ?? null,
+        'heartbeat'    => isset($spec['Dispatcher']['HeartbeatPeriod']) ? (int)round($spec['Dispatcher']['HeartbeatPeriod'] / 1e9) : null,
+    ];
+}
+
+/** "repo:tag@sha256:abcd…" → "tag (abcd1234)" – kurze Versionsangabe für Rollback-Beschriftungen */
+function sv_short_ref(string $img): string {
+    $dg = '';
+    if (($p = strpos($img, '@')) !== false) { $dg = substr($img, $p + 1); $img = substr($img, 0, $p); }
+    $last = substr($img, (int)strrpos($img, '/'));
+    $tag = strpos($last, ':') !== false ? substr($last, strrpos($last, ':') + 1) : 'latest';
+    return $tag . ($dg ? ' (' . substr(preg_replace('/^sha256:/', '', $dg), 0, 8) . ')' : '');
+}
+]]></INLINE>
+</FILE>
+<FILE Name="&plugdir;/include/monitor.php">
+<INLINE><![CDATA[<?php
+/*
+ * Swarm View – Hintergrund-Wächter (läuft per Cron jede Minute, siehe scripts/monitor.php)
+ *  - Benachrichtigungen: Node offline/online, Crash-Loop, nicht platzierbar, Ausweichen, Updates
+ *  - Bevorzugter Node: Services mit Label swarm-view.prefer=<node> kehren nach einem Ausfall zurück
+ *  - Update-Prüfung im eingestellten Intervall
+ */
+require_once __DIR__ . '/updates.php';
+
+/** Ein Problem melden – mit Verzögerung, Erinnerung und Entwarnung */
+class SvAlerts {
+    public array $st;
+    private array $cfg;
+    private array $seen = [];
+    public array $sent = [];   // für Tests/Log
+
+    public function __construct(array &$state, array $cfg) {
+        $this->st = &$state;
+        $this->st['alerts'] ??= [];
+        $this->cfg = $cfg;
+    }
+
+    /** Problem $key besteht gerade. Meldet nach $delayMin Minuten, erinnert nach NOTIFY_REPEAT Stunden. */
+    public function problem(string $key, int $delayMin, string $level, string $subject, string $desc): void {
+        $this->seen[$key] = true;
+        $now = sv_now();
+        $a = &$this->st['alerts'][$key];
+        $a ??= ['since' => $now, 'notified' => 0, 'subject' => $subject];
+        $a['subject'] = $subject;
+        if ($now - $a['since'] < $delayMin * 60) return;
+        $repeat = (int)$this->cfg['NOTIFY_REPEAT'] * 3600;
+        if ($a['notified'] && (!$repeat || $now - $a['notified'] < $repeat)) return;
+        $this->send($a['notified'] ? "Erinnerung: $subject" : $subject, $desc, $level);
+        $a['notified'] = $now;
+    }
+
+    /** Am Ende eines Laufs: nicht mehr gesehene Probleme sind behoben → ggf. Entwarnung */
+    public function finish(array $handledPrefixes): void {
+        foreach ($this->st['alerts'] as $key => $a) {
+            $handled = false;
+            foreach ($handledPrefixes as $p) if (str_starts_with($key, $p)) $handled = true;
+            if (!$handled || isset($this->seen[$key])) continue;
+            if ($a['notified'] && $this->cfg['NOTIFY_RECOVERY'] === 'yes') {
+                $this->send('Behoben: ' . $a['subject'], 'Das Problem besteht nicht mehr.', 'normal');
+            }
+            unset($this->st['alerts'][$key]);
+        }
+    }
+
+    public function send(string $subject, string $desc, string $level, string $msg = ''): void {
+        $this->sent[] = "[$level] $subject – $desc";
+        // Verlauf für die Einstellungsseite (Status)
+        $this->st['history'] ??= [];
+        $this->st['history'][] = ['t' => sv_now(), 'level' => $level, 'subject' => $subject, 'desc' => $desc];
+        $this->st['history'] = array_slice($this->st['history'], -20);
+        sv_notify($subject, $desc, $level, $msg);
+    }
+}
+
+function sv_monitor_run(array $cfg, bool $verbose = false): array {
+    global $DOCKER;
+    $log = [];
+    $state = sv_state_read('monitor');
+    $now = sv_now();
+
+    $sw = sv_swarm_settings();
+    if (!$sw['active'] || !$sw['manager']) return ['Kein aktiver Swarm-Manager – nichts zu tun.'];
+
+    /* ---------- Daten sammeln ---------- */
+    [$rc, $out] = sv_run([$DOCKER, 'node', 'ls', '--format', '{{json .}}']);
+    $nodes = [];
+    foreach (explode("\n", $rc === 0 ? $out : '') as $l) {
+        $n = json_decode(trim($l), true);
+        if (is_array($n) && !empty($n['Hostname'])) $nodes[$n['Hostname']] = [
+            'ready'  => strtolower($n['Status'] ?? '') === 'ready',
+            'avail'  => strtolower($n['Availability'] ?? ''),
+        ];
+    }
+    // Wie lange ist jeder Node schon durchgehend "ready"?
+    $state['readySince'] ??= [];
+    foreach ($nodes as $h => $n) {
+        if ($n['ready']) $state['readySince'][$h] ??= $now; else unset($state['readySince'][$h]);
+    }
+
+    $ignore = trim($cfg['NOTIFY_IGNORE']);
+    $ignored = function (string $svc) use ($ignore): bool {
+        return $ignore !== '' && @preg_match('~' . str_replace('~', '\~', $ignore) . '~', $svc) === 1;
+    };
+
+    $services = [];
+    foreach (sv_services_inspect() as $s) {
+        $lab = $s['Spec']['Labels'] ?? [];
+        if (!empty($lab['swarm-view.agent']) || !empty($lab['swarm-view.cleanup'])) continue;
+        $name = $s['Spec']['Name'];
+        $services[$name] = [
+            'id'      => $s['ID'],
+            'global'  => isset($s['Spec']['Mode']['Global']),
+            'prefer'  => trim($lab['swarm-view.prefer'] ?? ''),
+            'cons'    => $s['Spec']['TaskTemplate']['Placement']['Constraints'] ?? [],
+            'archs'   => array_values(array_filter(array_map(fn($p) => $p['Architecture'] ?? '', $s['Spec']['TaskTemplate']['Placement']['Platforms'] ?? []))),
+            'updated' => strtotime($s['UpdatedAt'] ?? '') ?: 0,
+            'tasks'   => [],
+        ];
+    }
+    if ($services) {
+        [$rc, $out] = sv_run(array_merge([$DOCKER, 'service', 'ps', '--no-trunc', '--filter', 'desired-state=running', '--format', '{{json .}}'], array_keys($services)), null, [], 30);
+        foreach (explode("\n", $rc === 0 ? $out : '') as $l) {
+            $t = json_decode(trim($l), true);
+            if (!is_array($t)) continue;
+            $tn = $t['Name'] ?? '';
+            $sn = substr($tn, 0, (int)strrpos($tn, '.'));
+            if (!isset($services[$sn])) continue;
+            $services[$sn]['tasks'][] = [
+                'id'      => $t['ID'] ?? '',
+                'node'    => $t['Node'] ?? '',
+                'running' => (bool)preg_match('/^Running/i', $t['CurrentState'] ?? ''),
+                'pending' => ($t['Node'] ?? '') === '' || (bool)preg_match('/^Pending/i', $t['CurrentState'] ?? ''),
+                'error'   => $t['Error'] ?? '',
+            ];
+        }
+    }
+
+    $alerts = new SvAlerts($state, $cfg);
+    $notifyOn = $cfg['NOTIFY_ENABLED'] === 'yes';
+
+    /* ---------- Node offline / wieder online ---------- */
+    if ($notifyOn && $cfg['NOTIFY_NODE'] === 'yes') {
+        foreach ($nodes as $h => $n) {
+            if (!$n['ready'] && $n['avail'] !== 'drain') {
+                $alerts->problem("node:$h", (int)$cfg['NOTIFY_NODE_DELAY'], $cfg['NOTIFY_NODE_LEVEL'],
+                    "Node $h ist offline", "Swarm erreicht $h nicht mehr. Services ohne festen Node werden auf andere Nodes verlegt.");
+            }
+        }
+    }
+
+    /* ---------- Crash-Loop (viele neue Tasks in kurzer Zeit) ---------- */
+    $state['taskSeen'] ??= [];
+    $state['restarts'] ??= [];
+    $window = max(1, (int)$cfg['NOTIFY_CRASH_WINDOW']) * 60;
+    foreach ($services as $name => $s) {
+        $prevIds = $state['taskSeen'][$name] ?? null;
+        $ids = array_column($s['tasks'], 'id');
+        // Neue Task-IDs zählen – außer der Service wurde gerade absichtlich geändert (Deploy/Update/Verschieben)
+        if ($prevIds !== null && $s['updated'] < ($state['lastRun'] ?? 0)) {
+            foreach (array_diff($ids, $prevIds) as $new) $state['restarts'][$name][] = $now;
+        }
+        $state['taskSeen'][$name] = $ids;
+        $state['restarts'][$name] = array_values(array_filter($state['restarts'][$name] ?? [], fn($t) => $now - $t < $window));
+        if (!$state['restarts'][$name]) unset($state['restarts'][$name]);
+
+        if ($notifyOn && $cfg['NOTIFY_CRASH'] === 'yes' && !$ignored($name)) {
+            $cnt = count($state['restarts'][$name] ?? []);
+            if ($cnt >= max(2, (int)$cfg['NOTIFY_CRASH_COUNT'])) {
+                $err = implode('; ', array_unique(array_filter(array_column($s['tasks'], 'error'))));
+                $alerts->problem("crash:$name", 0, $cfg['NOTIFY_CRASH_LEVEL'],
+                    "$name startet ständig neu", "$cnt Neustarts in {$cfg['NOTIFY_CRASH_WINDOW']} Minuten." . ($err ? " Fehler: $err" : ''));
+            }
+        }
+    }
+    foreach (array_keys($state['taskSeen']) as $n) if (!isset($services[$n])) unset($state['taskSeen'][$n], $state['restarts'][$n]);
+
+    /* ---------- Nicht platzierbar ---------- */
+    if ($notifyOn && $cfg['NOTIFY_PENDING'] === 'yes') {
+        foreach ($services as $name => $s) {
+            if ($ignored($name)) continue;
+            $pend = array_filter($s['tasks'], fn($t) => $t['pending']);
+            if ($pend) {
+                $err = implode('; ', array_unique(array_filter(array_column($pend, 'error')))) ?: 'kein passender Node';
+                $alerts->problem("pending:$name", (int)$cfg['NOTIFY_PENDING_DELAY'], $cfg['NOTIFY_PENDING_LEVEL'],
+                    "$name kann nicht starten", "Swarm findet keinen passenden Node: $err");
+            }
+        }
+    }
+
+    /* ---------- Ausgewichen / zurückgekehrt ---------- */
+    $state['placement'] ??= [];
+    foreach ($services as $name => $s) {
+        $where = array_values(array_unique(array_filter(array_map(fn($t) => $t['running'] ? $t['node'] : '', $s['tasks']))));
+        sort($where);
+        $before = $state['placement'][$name] ?? null;
+        if ($where) $state['placement'][$name] = $where;
+        if ($notifyOn && $cfg['NOTIFY_MOVED'] === 'yes' && !$ignored($name) && $before !== null && $where && $before !== $where
+            && $s['updated'] < ($state['lastRun'] ?? 0) && !isset($state['rebalance'][$name])) {
+            $alerts->send("$name läuft jetzt auf " . implode(', ', $where), 'Vorher: ' . implode(', ', $before), $cfg['NOTIFY_MOVED_LEVEL']);
+        }
+    }
+    foreach (array_keys($state['placement']) as $n) if (!isset($services[$n])) unset($state['placement'][$n]);
+
+    /* ---------- Bevorzugter Node: Rückkehr nach Ausfall ---------- */
+    $state['rebalance'] ??= [];
+    if ($cfg['REBALANCE'] === 'yes') {
+        $arch = sv_node_archs();
+        foreach ($services as $name => $s) {
+            $P = $s['prefer'];
+            $ours = "node.hostname==$P";
+            $phase = $state['rebalance'][$name] ?? null;
+            if ($P === '' || $s['global']) { unset($state['rebalance'][$name]); continue; }
+
+            if ($phase) {
+                // Schritt 2: Läuft er auf dem bevorzugten Node? → Constraint wieder entfernen (ohne Neustart)
+                $onP = $s['tasks'] && !array_filter($s['tasks'], fn($t) => !($t['running'] && $t['node'] === $P));
+                $timeout = $now - $phase['since'] > 600;
+                // Fällt der bevorzugte Node während der Rückkehr aus: Bindung sofort lösen, damit Swarm ausweichen kann
+                $pGone = !(($nodes[$P] ?? null) && $nodes[$P]['ready'] && $nodes[$P]['avail'] === 'active');
+                if ($onP || $timeout || $pGone || !in_array($ours, $s['cons'], true)) {
+                    if (in_array($ours, $s['cons'], true)) {
+                        sv_run([$DOCKER, 'service', 'update', '--detach', '--constraint-rm', $ours, $name]);
+                    }
+                    $log[] = $onP ? "$name ist zurück auf $P." : ($pGone ? "$name: Rückkehr abgebrochen, $P ist nicht verfügbar." : "$name: Rückkehr auf $P abgebrochen (Zeitüberschreitung).");
+                    if ($notifyOn && $cfg['NOTIFY_MOVED'] === 'yes' && $onP) $alerts->send("$name ist zurück auf $P", 'Automatische Rückkehr auf den bevorzugten Node.', $cfg['NOTIFY_MOVED_LEVEL']);
+                    unset($state['rebalance'][$name]);
+                }
+                continue;
+            }
+
+            // Schritt 1: Voraussetzungen prüfen und Constraint setzen
+            $node = $nodes[$P] ?? null;
+            if (!$node || !$node['ready'] || $node['avail'] !== 'active') continue;
+            if ($now - ($state['readySince'][$P] ?? $now) < (int)$cfg['REBALANCE_DELAY'] * 60) continue;
+            if (array_filter($s['cons'], 'sv_is_node_constraint')) continue;          // fest platziert (Datei oder Auswahl)
+            if ($s['archs'] && isset($arch[$P]) && !in_array($arch[$P], $s['archs'], true)) continue;
+            $running = array_filter($s['tasks'], fn($t) => $t['running']);
+            if (!$running || !array_filter($running, fn($t) => $t['node'] !== $P)) continue;   // läuft schon dort
+            [$rc, $o] = sv_run([$DOCKER, 'service', 'update', '--detach', '--constraint-add', $ours, $name]);
+            if ($rc === 0) {
+                $state['rebalance'][$name] = ['since' => $now, 'node' => $P];
+                $log[] = "$name wird auf den bevorzugten Node $P zurückverlegt.";
+            } else {
+                $log[] = "$name: Rückverlegung fehlgeschlagen: $o";
+            }
+        }
+    } else {
+        // Funktion abgeschaltet: offene Rückverlegungen sauber beenden
+        foreach ($state['rebalance'] as $name => $ph) {
+            sv_run([$DOCKER, 'service', 'update', '--detach', '--constraint-rm', "node.hostname=={$ph['node']}", $name]);
+            unset($state['rebalance'][$name]);
+        }
+    }
+
+    /* ---------- Update-Prüfung im Intervall ---------- */
+    if ($cfg['UPDATE_CHECK'] === 'yes') {
+        $upd = sv_updates_cached();
+        if ($now - (int)($upd['checked'] ?? 0) >= max(1, (int)$cfg['UPDATE_INTERVAL']) * 3600) {
+            $upd = sv_check_updates();
+            $avail = array_keys(array_filter($upd['services'], fn($u) => $u['update']));
+            $log[] = 'Update-Prüfung: ' . ($avail ? implode(', ', $avail) : 'alles aktuell');
+            // Nur neu gefundene Versionen melden
+            $new = array_values(array_filter($avail, fn($n) => ($upd['notified'][$n] ?? '') !== $upd['services'][$n]['remote']));
+            if ($new && $notifyOn && $cfg['NOTIFY_UPDATES'] === 'yes') {
+                $alerts->send(count($new) === 1 ? "Update verfügbar: {$new[0]}" : count($new) . ' Swarm-Updates verfügbar',
+                    implode(', ', $new), $cfg['NOTIFY_UPDATES_LEVEL']);
+            }
+            foreach ($new as $n) $upd['notified'][$n] = $upd['services'][$n]['remote'];
+            $upd['notified'] = array_intersect_key($upd['notified'], array_flip($avail));
+            sv_state_write('updates', $upd);
+        }
+    }
+
+    // Entwarnungen nur für Prüfungen, die in diesem Lauf aktiv waren
+    $handled = [];
+    if ($notifyOn && $cfg['NOTIFY_NODE'] === 'yes') $handled[] = 'node:';
+    if ($notifyOn && $cfg['NOTIFY_CRASH'] === 'yes') $handled[] = 'crash:';
+    if ($notifyOn && $cfg['NOTIFY_PENDING'] === 'yes') $handled[] = 'pending:';
+    $alerts->finish($handled);
+    if (!$notifyOn) $state['alerts'] = [];
+
+    $state['lastRun'] = $now;
+    // Ereignisse (Rückkehr, Update-Prüfung …) für die Statusanzeige
+    $state['events'] ??= [];
+    foreach ($log as $l) $state['events'][] = ['t' => $now, 'text' => $l];
+    $state['events'] = array_slice($state['events'], -20);
+    sv_state_write('monitor', $state);
+    return array_merge($log, array_map(fn($m) => "Gemeldet: $m", $alerts->sent));
+}
+
+/** Hostname → Architektur (amd64/arm64) */
+function sv_node_archs(): array {
+    global $DOCKER;
+    [$rc, $out] = sv_run([$DOCKER, 'node', 'ls', '-q']);
+    $ids = array_filter(explode("\n", $rc === 0 ? $out : ''));
+    if (!$ids) return [];
+    [$rc, $out] = sv_run(array_merge([$DOCKER, 'node', 'inspect'], array_values($ids)));
+    $map = ['x86_64' => 'amd64', 'aarch64' => 'arm64', 'armv7l' => 'arm'];
+    $res = [];
+    foreach ((json_decode($rc === 0 ? $out : '[]', true) ?: []) as $n) {
+        $a = $n['Description']['Platform']['Architecture'] ?? '';
+        $res[$n['Description']['Hostname'] ?? ''] = $map[$a] ?? $a;
+    }
+    return $res;
+}
+]]></INLINE>
+</FILE>
+<FILE Name="&plugdir;/include/updates.php">
+<INLINE><![CDATA[<?php
+/* Swarm View – Update-Hinweise: Digest im Service vs. Digest in der Registry */
+require_once __DIR__ . '/common.php';
+
+// Unraids Docker-Klassen auf Dateiebene laden (sie legen globale Variablen an).
+// Diese Datei darf deshalb nur auf oberster Ebene eingebunden werden (Skripte, actions.php).
+if (!getenv('SV_FAKE_REGISTRY')) {
+    $docroot ??= '/usr/local/emhttp';
+    if (is_file("$docroot/plugins/dynamix.docker.manager/include/DockerClient.php")) {
+        require_once "$docroot/plugins/dynamix.docker.manager/include/DockerClient.php";
+    }
+}
+
+/** "repo:tag@sha256:…" → ["repo:tag", "sha256:…"] */
+function sv_image_parts(string $img): array {
+    $digest = '';
+    if (($p = strpos($img, '@')) !== false) {
+        $digest = substr($img, $p + 1);
+        $img = substr($img, 0, $p);
+    }
+    // Tag ergänzen, wenn keiner angegeben ist (Port im Registry-Namen beachten)
+    $last = substr($img, (int)strrpos($img, '/'));
+    if (strpos($last, ':') === false) $img .= ':latest';
+    return [$img, $digest];
+}
+
+/** Aktueller Digest eines Tags in der Registry (über Unraids eigene Update-Prüfung) */
+function sv_remote_digest(string $ref): ?string {
+    // Test-Hook: feste Antworten aus einer JSON-Datei
+    if ($fake = getenv('SV_FAKE_REGISTRY')) {
+        $map = json_decode((string)@file_get_contents($fake), true) ?: [];
+        return $map[$ref] ?? null;
+    }
+    if (!class_exists('DockerUpdate')) return null;
+    try {
+        $d = (new DockerUpdate())->getRemoteVersionV2($ref);
+        return is_string($d) && str_starts_with($d, 'sha256:') ? $d : null;
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+/** Alle Services mit vollständiger Spec */
+function sv_services_inspect(): array {
+    global $DOCKER;
+    [$rc, $ids] = sv_run([$DOCKER, 'service', 'ls', '-q']);
+    $ids = array_filter(explode("\n", $rc === 0 ? $ids : ''));
+    if (!$ids) return [];
+    [$rc, $out] = sv_run(array_merge([$DOCKER, 'service', 'inspect'], array_values($ids)), null, [], 30);
+    $d = $rc === 0 ? json_decode($out, true) : null;
+    return is_array($d) ? $d : [];
+}
+
+/**
+ * Prüft alle Swarm-Services auf neue Image-Versionen und speichert das Ergebnis.
+ * @return array ['checked' => ts, 'services' => [name => [...]], 'errors' => [...]]
+ */
+function sv_check_updates(): array {
+    $prev = sv_state_read('updates');
+    $res = ['checked' => sv_now(), 'services' => [], 'errors' => [], 'notified' => $prev['notified'] ?? []];
+    $cache = [];
+    foreach (sv_services_inspect() as $s) {
+        $name = $s['Spec']['Name'] ?? '';
+        if ($name === '' || !empty($s['Spec']['Labels']['swarm-view.agent']) || !empty($s['Spec']['Labels']['swarm-view.cleanup'])) continue;
+        [$ref, $cur] = sv_image_parts($s['Spec']['TaskTemplate']['ContainerSpec']['Image'] ?? '');
+        if ($cur === '') {   // ohne Digest (z. B. lokal gebautes Image) nicht prüfbar
+            $res['services'][$name] = ['ref' => $ref, 'current' => '', 'remote' => '', 'update' => false, 'note' => 'kein Digest (lokales Image?)'];
+            continue;
+        }
+        if (!array_key_exists($ref, $cache)) $cache[$ref] = sv_remote_digest($ref);
+        $remote = $cache[$ref];
+        if ($remote === null) $res['errors'][] = "$ref: Registry nicht erreichbar oder Image unbekannt";
+        $res['services'][$name] = [
+            'ref'     => $ref,
+            'current' => $cur,
+            'remote'  => (string)$remote,
+            'update'  => $remote !== null && $remote !== $cur,
+        ];
+    }
+    sv_state_write('updates', $res);
+    return $res;
+}
+
+/** Ergebnis der letzten Prüfung (für api.php) */
+function sv_updates_cached(): array {
+    return sv_state_read('updates');
+}
+]]></INLINE>
+</FILE>
+<FILE Name="&plugdir;/js/common.js">
+<INLINE><![CDATA[/* Swarm View – gemeinsamer Teil: Zustand, Hilfsfunktionen, Node-Auswahl, Laden
+ * Reihenfolge: common.js → stacks.js → containers.js (startet am Ende SwarmView.start())
+ */
+(function ($) {
+  'use strict';
+
+  const SV = window.SwarmView = window.SwarmView || {};
+  const API = '/plugins/swarm-view/include/api.php';
+  const REFRESH_MS = 15000;
+  const OPEN_KEY = 'swarmview_open';
+  SV.data = null;        // letzte Antwort von api.php
+  SV.busy = false;       // läuft gerade eine Aktion?
+  SV.listPending = 0;    // laufende Ladevorgänge von Unraids Container-Liste
+  const cfg = () => Object.assign({ remoteRows: 'always', hostColumn: true, refresh: 15 }, (SV.data && SV.data.config) || {});
+
+  /* ---------- Helpers ---------- */
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  const isAdvanced = () => {
+    const $t = $('input.advancedview');
+    if ($t.length) return $t.is(':checked');
+    return /(?:^|;\s*)docker_listview_mode=advanced/.test(document.cookie);
+  };
+  const applyViewMode = () => $('body').toggleClass('sv-advanced', isAdvanced());
+
+  /**
+   * Auf-/Zugeklappt pro Stack: { name: true|false }. Gilt in beiden Ansichten.
+   * Ohne gespeicherten Zustand: erweiterte Ansicht = aufgeklappt, Basisansicht = zugeklappt.
+   */
+  const openState = () => {
+    try {
+      const v = JSON.parse(sessionStorage.getItem(OPEN_KEY) || '{}');
+      if (Array.isArray(v)) return Object.fromEntries(v.map((n) => [n, true])); // altes Format
+      return v && typeof v === 'object' ? v : {};
+    } catch (e) { return {}; }
+  };
+  const isOpen = (name) => { const v = openState()[name]; return v === undefined ? isAdvanced() : !!v; };
+  const setOpen = (name, open) => {
+    const st = openState(); st[name] = !!open;
+    try { sessionStorage.setItem(OPEN_KEY, JSON.stringify(st)); } catch (e) { /* egal */ }
+  };
+
+  // Einheitliche Node-Abzeichen: Server-Symbol = lokal, Pfeil = ausgelagert; Text nur der Node-Name
+  const localBadge = (host, extra) =>
+    `<span class="sv-badge sv-local" title="lokal (auf diesem Server)"><i class="fa fa-server"></i>${esc(host)}${extra || ''}</span>`;
+  const remoteBadge = (host, extra) =>
+    `<span class="sv-badge sv-remote" title="ausgelagert auf ${esc(host)}"><i class="fa fa-external-link"></i>${esc(host)}${extra || ''}</span>`;
+
+  function placeBadge(t) {
+    const tip = esc([t.current, t.error].filter(Boolean).join(' – '));
+    if (!t.node) return `<span class="sv-badge sv-pending" title="${tip}"><i class="fa fa-hourglass-half"></i>nicht platziert</span>`;
+    return `<span title="${tip}">${t.local ? localBadge(t.node) : remoteBadge(t.node)}</span>`;
+  }
+
+  /** Fasst Tasks pro Node zusammen: "Tower ×2", "ausgelagert: pi ×1" */
+  function aggregateBadges(tasks) {
+    const per = new Map();
+    for (const t of tasks) {
+      const k = t.node || '';
+      const e = per.get(k) || { n: 0, local: t.local };
+      e.n++; per.set(k, e);
+    }
+    let out = '';
+    for (const [node, e] of per) {
+      const cnt = e.n > 1 ? ` ×${e.n}` : '';
+      if (!node) out += `<span class="sv-badge sv-pending"><i class="fa fa-hourglass-half"></i>nicht platziert${cnt}</span>`;
+      else if (e.local) out += localBadge(node, cnt);
+      else out += remoteBadge(node, cnt);
+    }
+    return out || '<span class="sv-dim">–</span>';
+  }
+
+  function replicaSum(services) {
+    let run = 0, want = 0;
+    for (const sv of services) {
+      const m = String(sv.replicas || '').match(/^(\d+)\/(\d+)/);
+      if (m) { run += +m[1]; want += +m[2]; }
+    }
+    return { run, want };
+  }
+  // Status: alle laufen = grün · teilweise = orange · keiner = rot · bewusst 0 Replicas = grau
+  const replicaClass = (run, want) => (want === 0 ? 'sv-dim' : run === want ? 'sv-ok' : run === 0 ? 'sv-bad' : 'sv-warn');
+  const statusIcon = (run, want) =>
+    want === 0 ? '<i class="fa fa-square sv-dim" style="margin-left:5px" title="0 Replicas gewünscht"></i>'
+      : run === want ? '<i class="fa fa-play green-text" style="margin-left:5px"></i>'
+        : run === 0 ? '<i class="fa fa-square red-text" style="margin-left:5px"></i>'
+          : '<i class="fa fa-play orange-text" style="margin-left:5px"></i>';
+
+
+  /* ---------- Node-Auswahl ---------- */
+  const ARCH = { x86_64: 'amd64', amd64: 'amd64', aarch64: 'arm64', arm64: 'arm64', armv7l: 'arm', armhf: 'arm' };
+
+  function findService(fullName) {
+    if (!SV.data) return null;
+    for (const st of SV.data.stacks) for (const sv of st.services) if (sv.name === fullName) return sv;
+    return null;
+  }
+
+  /**
+   * Kann der Service auf Node n laufen? → { ok, note }
+   *  - Architektur: Plattformen aus der Registry (leer = unbekannt = ok)
+   *  - Lokales Image (ohne Registry-Digest): nur Nodes, auf denen er gerade läuft – dort liegt das Image sicher
+   *  - Node bereit und aktiv
+   */
+  function nodeCheck(sv, n, ignoreState = false) {
+    const arch = ARCH[n.arch] || n.arch;
+    if ((sv.platforms || []).length && !sv.platforms.includes(arch)) return { ok: false, note: `kein ${arch}-Image` };
+    if (sv.localImage) {
+      const where = new Set((sv.tasks || []).filter((t) => t.node && /^running/i.test(t.current)).map((t) => t.node));
+      if (where.size && !where.has(n.hostname)) return { ok: false, note: 'lokales Image' };
+    }
+    if (!ignoreState && (n.state !== 'ready' || n.availability !== 'active')) return { ok: false, note: n.state !== 'ready' ? 'nicht erreichbar' : 'Wartung' };
+    return { ok: true, note: '' };
+  }
+
+  /** Aktuelle Platzierung als Wert der Auswahl: '' | 'fixed:N' | 'prefer:N' */
+  const placeValue = (sv) => (sv.placeNode && !sv.rebalancing ? `fixed:${sv.placeNode}` : sv.prefer ? `prefer:${sv.prefer}` : '');
+
+  /**
+   * <select> „Läuft auf“ – oder '' wenn nicht sinnvoll.
+   *  Bevorzugt: läuft dort, wenn der Node verfügbar ist; sonst woanders, der Wächter holt ihn zurück
+   *  Fest:      läuft nur dort (fällt der Node aus, startet der Service nicht)
+   */
+  function placeSelect(sv) {
+    if (!sv || !SV.data || SV.data.nodes.length < 2 || sv.mode === 'global') return '';
+    const cur = placeValue(sv);
+    const opt = (val, label, c) => `<option value="${esc(val)}"${cur === val ? ' selected' : ''}${c.ok || cur === val ? '' : ' disabled'}>${esc(label)}${c.note ? ` (${esc(c.note)})` : ''}</option>`;
+    const pref = SV.data.nodes.map((n) => opt(`prefer:${n.hostname}`, `★ ${n.hostname}`, nodeCheck(sv, n, true))).join('');
+    const fixed = SV.data.nodes.map((n) => opt(`fixed:${n.hostname}`, `Nur ${n.hostname}`, nodeCheck(sv, n))).join('');
+    return `<select class="sv-place" data-service="${esc(sv.name)}" data-current="${esc(cur)}"${SV.busy ? ' disabled' : ''} title="Wo soll der Service laufen? ★ = bevorzugt (weicht bei Ausfall aus), Nur = fest. Gilt bis zum nächsten Stack Up.">`
+      + `<option value=""${cur === '' ? ' selected' : ''}>Automatisch</option>`
+      + `<optgroup label="Bevorzugt – weicht bei Ausfall aus">${pref}</optgroup>`
+      + `<optgroup label="Fest – nur dieser Node">${fixed}</optgroup></select>`;
+  }
+
+  $(document).on('click', '.sv-place', (e) => e.stopPropagation());
+  /** Service-Platzierung ändern (value: '' | 'fixed:N' | 'prefer:N') – mit Rückfrage */
+  function placeService(svc, value) {
+    const sv = findService(svc) || {};
+    const short = sv.short || svc;
+    const [mode, node] = value ? String(value).split(':') : ['', ''];
+    const keep = 'Gilt bis zum nächsten Stack Up – dann zählt wieder die docker-stack.yml.';
+    const c = cfg();
+    let title, text;
+    if (mode === 'prefer') {
+      title = `„${short}“ bevorzugt auf ${node}?`;
+      text = `Läuft auf ${node}, solange der Node verfügbar ist. Fällt er aus, startet Swarm den Service auf einem anderen Node; `
+        + `ist ${node} danach ${c.rebalanceDelay || 5} Minuten stabil, kommt er automatisch zurück. ${keep} `
+        + `Dauerhaft: in der docker-stack.yml unter deploy: labels: swarm-view.prefer: ${node}`
+        + (c.rebalance ? '' : '\n\nDie automatische Rückkehr wird dafür in den Einstellungen eingeschaltet.');
+    } else if (mode === 'fixed') {
+      title = `„${short}“ fest auf ${node}?`;
+      text = `Der Service läuft nur noch auf ${node}. Ist der Node aus, startet er nicht. ${keep}`;
+    } else {
+      title = `„${short}“ automatisch platzieren?`;
+      text = `Swarm entscheidet wieder selbst, wo der Service läuft (Neustart möglich). ${keep}`;
+    }
+    confirmBox(title, text, () => {
+      SV.busy = true;
+      $('.sv-place').prop('disabled', true);
+      post({ action: 'place', service: svc, mode, node: node || '' })
+        .done((r) => showResult(`Platzierung: ${short}`, r))
+        .fail((x) => showResult(`Platzierung: ${short}`, failResult(x)))
+        .always(() => { SV.busy = false; SV.load(); setTimeout(SV.load, 3000); setTimeout(SV.load, 8000); });
+    });
+  }
+
+  $(document).on('change', '.sv-place', function () {
+    const $sel = $(this);
+    const cur = String($sel.data('current') || '');
+    placeService(String($sel.data('service')), $sel.val());
+    // Bei Abbruch alte Auswahl wiederherstellen (wird beim nächsten Render ohnehin neu gesetzt)
+    setTimeout(() => { if (!SV.busy) $sel.val(cur); }, 0);
+  });
+
+
+  /* ---------- Stack-Aktionen ---------- */
+  const ACTIONS = '/plugins/swarm-view/include/actions.php';
+
+  // CSRF-Token hängt Unraids $.ajaxPrefilter automatisch an POSTs an
+  const post = (d) => $.ajax({ url: ACTIONS, type: 'POST', data: d, dataType: 'json', timeout: 310000 });
+  const failResult = (x) => ({ ok: false, error: `Anfrage fehlgeschlagen (${x.status || 'Timeout'})`, log: x.responseText || '' });
+
+  function showResult(title, r) {
+    const text = [r.error, r.log].filter(Boolean).join('\n\n') || (r.ok ? 'OK' : 'Fehler');
+    if (typeof swal === 'function') {
+      setTimeout(() => swal({ title, text: `<pre class="sv-log">${esc(text)}</pre>`, html: true, type: r.ok ? 'success' : 'error' }), 150);
+    } else {
+      alert(`${title}\n\n${text}`);
+    }
+  }
+
+  function confirmBox(title, text, cb) {
+    if (typeof swal === 'function') {
+      swal({ title, text, type: 'warning', showCancelButton: true, confirmButtonText: 'Ja', cancelButtonText: 'Abbrechen' },
+        (ok) => { if (ok) cb(); });
+    } else if (confirm(`${title}\n\n${text}`)) cb();
+  }
+
+
+
+  /* ---------- Laden ---------- */
+  // Unraids loadlist() startet den Ladebalken per Timer (timers.docker). Laufen zwei
+  // loadlist() gleichzeitig, geht ein Timer verloren und der Balken bleibt für immer.
+  // Darum: Neuladen nur anstoßen, wenn gerade keine Container-Liste geladen wird.
+  const LIST_URL = /DockerContainers\.php/;
+  let reloadWanted = false;
+  let keyAtLastListLoad = null;   // welche Pi-Container beim letzten Laden der Liste im DOM waren
+  const currentRemoteKey = () => (cfg().remoteRows === 'never' ? '' : SV.remoteTasks().map((r) => r.name).sort().join('|'));
+
+  $(document).ajaxSend((e, x, o) => { if (LIST_URL.test(o.url || '')) SV.listPending++; });
+  // Gleicher Task wie Unraids Callback → die Zeilen, die gleich eingefügt werden, stammen aus genau diesen Daten
+  $(document).ajaxSuccess((e, x, o) => {
+    if (LIST_URL.test(o.url || '')) keyAtLastListLoad = SV.data ? currentRemoteKey() : '';
+  });
+  $(document).ajaxComplete((e, x, o) => {
+    if (!LIST_URL.test(o.url || '')) return;
+    SV.listPending = Math.max(0, SV.listPending - 1);
+    // nach Unraids Callback + Folder View (Microtasks) auswerten
+    setTimeout(() => {
+      if (SV.listPending) return;
+      // Sicherheitsnetz: verwaisten Ladebalken ausblenden
+      setTimeout(() => { if (!SV.listPending) $('div.spinner.fixed').hide(); }, 700);
+      if (reloadWanted) { reloadWanted = false; maybeReloadList(); }
+    }, 50);
+  });
+
+  function maybeReloadList() {
+    if (!folderViewActive() || typeof window.loadlist !== 'function' || !SV.data) return;
+    if (keyAtLastListLoad === null || keyAtLastListLoad === currentRemoteKey()) return;
+    if (SV.listPending) { reloadWanted = true; return; }
+    window.loadlist();
+  }
+
+  function render() {
+    if (!SV.data) return;
+    SV.renderMsg();
+    SV.renderNodes();
+    SV.renderStacks();
+    SV.decorateDockerTable();
+    // Neue/verschwundene Pi-Container → Folder View muss neu sortieren
+    maybeReloadList();
+  }
+
+  function folderViewActive() {
+    try { return typeof folderEvents !== 'undefined'; } catch (e) { return false; }
+  }
+
+  let refreshTimer = null;
+  let refreshEvery = 0;
+  function scheduleRefresh() {
+    const sec = Math.max(5, +cfg().refresh || REFRESH_MS / 1000);
+    if (sec === refreshEvery && refreshTimer) return;
+    refreshEvery = sec;
+    clearInterval(refreshTimer);
+    refreshTimer = setInterval(() => { if (!document.hidden) SV.load(); }, sec * 1000);
+  }
+
+  function load() {
+    $.ajax({ url: API, dataType: 'json', cache: false, timeout: 20000 })
+      .done((d) => { SV.data = d; render(); if (refreshTimer) scheduleRefresh(); })
+      .fail((x, status) => {
+        $('#sv-msg').attr('class', 'sv-msg error')
+          .text(`Swarm-API nicht erreichbar (${x.status || status}).`).show();
+      });
+  }
+
+  /** Wird am Ende von containers.js aufgerufen, wenn alle Teile geladen sind */
+  function start() {
+    // Daten so früh wie möglich holen, damit die Pi-Container schon beim ersten Laden der Liste da sind
+    SV.load();
+
+    $(function () {
+      applyViewMode();
+      // Unraids "Basic/Advanced View"-Schalter mitbenutzen
+      $(document).on('change', 'input.advancedview', applyViewMode);
+      SV.decorateDockerTable();
+      scheduleRefresh();
+    });
+  }
+
+  Object.assign(SV, {
+    esc, cfg, isAdvanced, applyViewMode, isOpen, setOpen, localBadge, remoteBadge, placeBadge, aggregateBadges,
+    replicaSum, replicaClass, statusIcon, ARCH, findService, nodeCheck, placeSelect, placeService, ACTIONS, post, failResult,
+    showResult, confirmBox, load, start,
+  });
+})(jQuery);
+]]></INLINE>
+</FILE>
+<FILE Name="&plugdir;/js/containers.js">
+<INLINE><![CDATA[/* Swarm View – Unraids Container-Liste: Host-Spalte, Container anderer Nodes, Kontextmenü, Logs, Folder View */
+(function ($) {
+  'use strict';
+
+  const SV = window.SwarmView;
+  const { esc, cfg, localBadge, remoteBadge, findService, nodeCheck, placeSelect, placeService, post, failResult, showResult, confirmBox, openEditor, serviceAction } = SV;
+
+  /* ---------- 2) Unraids Container-Tabelle erweitern ---------- */
+  let observer = null;
+  let remoteIndex = {};      // Element-ID → Task-Infos (für Kontextmenü/Logs)
+  const QUESTION_ICON = '/plugins/dynamix.docker.manager/images/question.png';
+
+  /* ---------- Zeiten auf Deutsch (wie Unraid: „Betriebszeit: 54 Minuten“, „Erstellt: vor 54 Minuten“) ---------- */
+  /** Wie Dockers HumanDuration (daraus übersetzt Unraid „Up 54 minutes“), nur auf Deutsch; dative = „vor 2 Tagen“ */
+  function durationDe(sec, dative) {
+    const pl = (n, one, many, manyDat) => `${n} ${n === 1 ? one : dative ? manyDat : many}`;
+    sec = Math.max(0, sec);
+    if (sec < 1) return dative ? 'weniger als einer Sekunde' : 'weniger als 1 Sekunde';
+    if (sec < 60) return pl(Math.floor(sec), 'Sekunde', 'Sekunden', 'Sekunden');
+    const min = Math.floor(sec / 60);
+    if (min === 1) return dative ? 'etwa einer Minute' : 'etwa 1 Minute';
+    if (min < 60) return pl(min, 'Minute', 'Minuten', 'Minuten');
+    const h = Math.round(sec / 3600);
+    if (h === 1) return dative ? 'etwa einer Stunde' : 'etwa 1 Stunde';
+    if (h < 48) return pl(h, 'Stunde', 'Stunden', 'Stunden');
+    if (h < 24 * 7 * 2) return pl(Math.floor(h / 24), 'Tag', 'Tage', 'Tagen');
+    if (h < 24 * 30 * 2) return pl(Math.floor(h / 24 / 7), 'Woche', 'Wochen', 'Wochen');
+    if (h < 24 * 365 * 2) return pl(Math.floor(h / 24 / 30), 'Monat', 'Monate', 'Monaten');
+    return pl(Math.floor(h / 24 / 365), 'Jahr', 'Jahre', 'Jahren');
+  }
+  const since = (iso) => { const t = Date.parse(iso || ''); return isNaN(t) ? null : (Date.now() - t) / 1000; };
+  const timesHtml = (r) => {
+    const up = since(r.since), cr = since(r.created);
+    const first = r.running ? (up != null ? `Betriebszeit: ${durationDe(up)}` : 'läuft')
+      : `${esc(String(r.current).split(' ')[0] || 'Beendet')}${up != null ? `: vor ${durationDe(up, true)}` : ''}`;
+    return `<div style="white-space:nowrap">${first}${cr != null ? `<div style="margin-top:4px">Erstellt: vor ${durationDe(cr, true)}</div>` : ''}</div>`;
+  };
+
+  /* ---------- Anzeigename (Label swarm-view.name) ----------
+   * Swarm vergibt Containernamen selbst (service.slot.task-id), container_name wird ignoriert.
+   * Der echte Name bleibt als Text im DOM – Folder View, Autostart-Reihenfolge und Unraids Menüs
+   * arbeiten damit weiter. Angezeigt wird per CSS (::before) nur der Anzeigename. */
+  function aliasFor(sv, slot) {
+    if (!sv || !sv.alias) return '';
+    return (sv.desired || 0) > 1 && slot ? `${sv.alias}.${slot}` : sv.alias;
+  }
+  function setAlias(el, alias, realName) {
+    if (!el) return;
+    if (!alias) {
+      if (el.hasAttribute('data-sv-alias')) { el.removeAttribute('data-sv-alias'); el.removeAttribute('title'); el.style.removeProperty('--sv-fs'); }
+      return;
+    }
+    if (el.getAttribute('data-sv-alias') === alias) return;
+    if (!el.hasAttribute('data-sv-alias')) el.style.setProperty('--sv-fs', getComputedStyle(el).fontSize || '');
+    el.setAttribute('data-sv-alias', alias);
+    el.setAttribute('title', `Container: ${realName}`);
+  }
+  /** echter Name → Anzeigename, für Ordner-Vorschauen von Folder View */
+  function aliasMap() {
+    const m = new Map();
+    for (const r of Object.values(remoteIndex)) if (r.alias) m.set(r.name, r.alias);
+    for (const [name, c] of Object.entries((SV.data && SV.data.containers) || {})) {
+      if (!c.swarmService) continue;
+      const a = aliasFor(findService(c.swarmService), (name.slice(c.swarmService.length + 1).split('.')[0]) || '');
+      if (a) m.set(name, a);
+    }
+    return m;
+  }
+
+  const SWARM_STOP_HINT = 'Swarm-Container: Stoppen über Unraid hält nicht – Swarm startet ihn neu. Zum Anhalten „Stack Down“ in der Swarm-Leiste nutzen.';
+  const shortSvc = (svc, stack) => (stack && svc.startsWith(stack + '_') ? svc.slice(stack.length + 1) : svc);
+
+  function hostCell(name) {
+    if (!SV.data) return '<span class="sv-dim">…</span>';
+    const c = (SV.data.containers || {})[name] || {};
+    if (!c.swarmService) return '<span class="sv-dim sv-small" title="Normaler Container auf diesem Server (nicht Swarm)">lokal</span>';
+    let html = localBadge(SV.data.host);
+    html += `<div class="sv-dim" style="margin-top:4px;white-space:nowrap"><i class="fa fa-cubes"></i> Swarm: ${esc(c.swarmStack || '–')} / ${esc(shortSvc(c.swarmService, c.swarmStack))}</div>`;
+    const sel = placeSelect(findService(c.swarmService));
+    if (sel) html += `<div style="margin-top:4px">${sel}</div>`;
+    return html;
+  }
+
+  /** WebUI-URL wie bei Unraid: [IP] → Unraid-IP (Routing-Mesh), [PORT:x] → veröffentlichter Port */
+  function webUiFor(sv) {
+    const host = location.hostname;
+    const pubFor = (target) => {
+      const p = (sv.portList || []).find((x) => +x.target === +target);
+      return p ? p.published : target;
+    };
+    const tpl = (sv.labels || {})['net.unraid.docker.webui'];
+    if (tpl) return tpl.replace(/\[IP\]/g, host).replace(/\[PORT:(\d+)\]/g, (m, t) => pubFor(t));
+    const first = (sv.portList || []).find((p) => p.published && p.proto === 'tcp');
+    return first ? `http://${host}:${first.published}` : '';
+  }
+
+  /** Alle Swarm-Tasks, die NICHT auf diesem Host laufen – mit stabilem Namen stack_service.slot */
+  function remoteTasks() {
+    if (!SV.data || !SV.data.swarm.active) return [];
+    const managed = new Set(SV.data.managed || []);
+    const out = [];
+    for (const st of SV.data.stacks) {
+      for (const sv of st.services) {
+        for (const t of sv.tasks) {
+          if (!t.node || t.local || !t.id) continue;
+          const image = String(sv.image || '');
+          out.push({
+            elId: `sv-${t.id.slice(0, 12)}`,
+            sid: `sv${t.id.slice(0, 10)}`, // „Kurz-ID“ wie bei Unraid: CPU/RAM-Spans und Folder View hängen daran
+            name: `${sv.name}.${t.slot}`,
+            taskId: t.id,
+            service: sv.name,
+            stack: st.name === '(ohne Stack)' ? '' : st.name,
+            managed: managed.has(st.name),
+            node: t.node,
+            running: /^running/i.test(t.current),
+            current: t.current,
+            image,
+            tag: image.includes(':') ? image.split(':').pop() : 'latest',
+            icon: (sv.labels || {})['net.unraid.docker.icon'] || QUESTION_ICON,
+            labels: sv.labels || {},
+            ports: sv.portList || [],
+            mounts: (sv.mounts || []).filter((m) => m.type === 'bind'),
+            webui: webUiFor(sv),
+            placeHtml: placeSelect(sv),
+            update: sv.update,
+            canRollback: sv.canRollback,
+            rollbackTo: sv.rollbackTo || '',
+            stats: ((SV.data.stats || {}).tasks || {})[t.id] || null,
+            short: sv.short || sv.name,
+            alias: aliasFor(sv, t.slot),
+            created: t.created || '',
+            since: t.since || '',
+            containerId: t.containerId || '',
+            networks: t.networks || [],
+          });
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Zeile im selben Markup wie Unraids DockerContainers.php (damit Folder View & Co. sie verstehen) */
+  function remoteRowCells(r) {
+    const host = location.hostname;
+    const dash = '<span class="sv-dim">–</span>';
+    const ports = r.ports.map((p) => `${p.target}:${String(p.proto).toUpperCase()}`).join('<br>') || dash;
+    const lan = r.ports.filter((p) => p.published).map((p) => `${esc(host)}:${p.published}`).join('<br>') || dash;
+    const vols = r.mounts.map((m) =>
+      `${esc(m.target)}<i class="fa fa-${m.ro ? 'long-arrow-left' : 'arrows-h'}" style="margin:0 6px"></i>${esc(m.source)}`).join('<br>') || dash;
+    const nets = r.networks.map((n) => esc(n.name)).join('<br>') || dash;
+    const ips = r.networks.map((n) => esc(n.addr)).filter(Boolean).join('<br>') || dash;
+    const upd = r.update ? '<span class="orange-text" style="white-space:nowrap"><i class="fa fa-flash fa-fw"></i> Update verfügbar</span>'
+      : r.update === false ? '<span class="green-text" style="white-space:nowrap"><i class="fa fa-check fa-fw"></i> aktuell</span>' : '';
+    const by = r.image.replace(/:[^:/]*$/, '');
+    return `
+      <td class="ct-name" style="width:220px;padding:8px"><i class="fa fa-arrows-v mover orange-text"></i>
+        <span class="outer"><span id="${r.elId}" onclick="svRemoteContext('${r.elId}')" class="hand"><img src="${esc(r.icon)}" class="img" onerror="this.onerror=null;this.src='${QUESTION_ICON}';"></span>
+        <span class="inner"><span class="appname" id="${r.elId}-n" onclick="svRemoteContext('${r.elId}', this.id)"${r.alias ? ` data-sv-alias="${esc(r.alias)}" title="Container: ${esc(r.name)}"` : ''}><a class="sv-name">${esc(r.name)}</a></span><br>
+          <i id="load-${r.elId}" class="fa fa-${r.running ? 'play started green-text' : 'square stopped orange-text'}"></i><span class="state" title="${esc(SWARM_STOP_HINT)}">${r.running ? 'Gestartet' : esc(r.current.split(' ')[0] || '?')}<br/>Swarm: ${esc(r.stack || '–')} / ${esc(r.short)}</span>
+        </span></span>
+        <div class="sv-adv" style="margin-top:8px">${r.containerId ? `Container-ID: ${esc(r.containerId)}` : `Task-ID: ${esc(r.taskId.slice(0, 12))}`}<br>Von: ${esc(by)}</div>
+      </td>
+      <td class="updatecolumn">${upd}<div class="sv-adv" style="white-space:nowrap"><i class="fa fa-info-circle fa-fw"></i> ${esc(r.tag)}</div></td>
+      <td style="white-space:nowrap">${nets}</td>
+      <td style="white-space:nowrap">${ips}</td>
+      <td style="white-space:nowrap">${ports}</td>
+      <td style="white-space:nowrap">${lan}</td>
+      <td style="word-break:break-all">${vols}</td>
+      <td class="sv-adv sv-load"><span class="cpu-${r.sid}">…</span><div class="usage-disk mm"><span id="cpu-${r.sid}" style="width:0"></span><span></span></div><br><span class="mem-${r.sid}">…</span></td>
+      ${cfg().hostColumn ? `<td class="sv-adv sv-hostcol">${remoteBadge(r.node)}${r.placeHtml ? `<div style="margin-top:4px">${r.placeHtml}</div>` : ''}</td>` : ''}
+      <td style="white-space:nowrap" title="${esc(SWARM_STOP_HINT)}"><i class="fa fa-cubes fa-fw"></i> Swarm</td>
+      <td class="sv-times">${timesHtml(r)}</td>`;
+  }
+
+  const rowSig = (r, mode) => JSON.stringify(Object.assign({}, r, { stats: null })) + mode + cfg().hostColumn;
+
+  /* ---------- CPU/RAM: Pi-Container wie Unraids Zeilen, Ordner-Summen für Folder View ---------- */
+  const UNITS = { B: 1, KiB: 2 ** 10, MiB: 2 ** 20, GiB: 2 ** 30, TiB: 2 ** 40, kB: 1e3, KB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12 };
+  const memToB = (m) => {
+    const x = String(m || '').trim().match(/^([\d.,]+)\s*([A-Za-z]*)$/);
+    return x ? parseFloat(x[1].replace(',', '.')) * (UNITS[x[2] || 'B'] || 1) : 0;
+  };
+  const bToMem = (b) => {
+    const u = ['B', 'KiB', 'MiB', 'GiB', 'TiB']; let i = 0;
+    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+    return b ? `${b.toFixed(2)} ${u[i]}` : '0 B';
+  };
+  const pct = (v) => `${(Math.round(v * 100) / 100).toFixed(2)}%`;
+  const selfNode = () => (SV.data.nodes || []).find((n) => n.self) || {};
+  const nodeCpus = (host) => ((SV.data.nodes || []).find((n) => n.hostname === host) || {}).cpus || 0;
+
+  /** Werte eines Pi-Containers: cpu = % der CPUs seines Nodes (wie Unraid), cores = belegte Kerne */
+  function remoteLoad(r) {
+    const st = r.stats;
+    if (!st) return null;
+    const ncpu = st.ncpu || nodeCpus(r.node) || 1;
+    const raw = parseFloat(String(st.cpu).replace(',', '.')) || 0;   // docker stats: 100 % = 1 Kern
+    const [used, lim] = String(st.mem || '').split('/').map((x) => x.trim());
+    const usedB = memToB(used);
+    // "0B / 0B": Docker auf dem Node misst keinen Speicher (cgroup_enable=memory fehlt, typisch beim Pi)
+    const noMem = !memToB(lim);
+    const limB = noMem ? 0 : memToB(lim);
+    return { node: r.node, ncpu, cores: raw / 100, cpu: Math.min(raw / ncpu, 100), usedB, limB, memText: st.mem || '', noMem };
+  }
+
+  function updateRemoteLoads() {
+    const enabled = (SV.data.stats || {}).enabled;
+    for (const r of Object.values(remoteIndex)) {
+      $(`tr.sv-remote-row[data-sv-name="${r.name}"] > td.sv-times`).html(timesHtml(r));
+      const l = remoteLoad(r);
+      const $cpu = $(`span.cpu-${r.sid}`), $mem = $(`span.mem-${r.sid}`), $bar = $(`[id="cpu-${r.sid}"]`);
+      if (!l) {
+        $cpu.text(enabled ? '…' : '–'); $mem.text(enabled ? '…' : '–').attr('title', enabled ? 'Noch keine Werte vom Agenten' : 'CPU/RAM-Agent ist in den Einstellungen aus');
+        $bar.css('width', 0);
+        continue;
+      }
+      $cpu.text(pct(l.cpu)); $bar.css('width', pct(l.cpu));
+      if (l.noMem) $mem.text('RAM nicht messbar').attr('title', `Docker auf ${r.node} misst keinen Speicher: cgroup_enable=memory fehlt in /boot/firmware/cmdline.txt`);
+      else $mem.text(l.memText).attr('title', r.stats.memApprox
+        ? `Geschätzt aus dem Speicher der Prozesse (RSS) – Docker auf ${r.node} misst keinen Container-Speicher (Speicher-cgroup aus)`
+        : `CPU-Wert bezogen auf ${l.ncpu} Kerne von ${r.node}`);
+    }
+  }
+
+  /**
+   * Folder View rechnet CPU/RAM eines Ordners nur aus Unraids lokalen Messwerten. Wenn es seine Summe
+   * schreibt, merken wir uns den lokalen Wert und schreiben – je nach Einstellung – die Summe über alle
+   * Nodes darüber. Die Aufteilung pro Node steht im Tooltip.
+   */
+  function folderParts(id, $row) {
+    const remote = $(`tr.sv-remote-row.folder-${id}-element`).get().map((tr) => {
+      const r = Object.values(remoteIndex).find((x) => x.name === tr.getAttribute('data-sv-name'));
+      return r ? remoteLoad(r) : null;
+    }).filter(Boolean);
+    const hasLocal = $(`.folder-${id}-element`).not('.sv-remote-row').length > 0;
+    const $c = $row.find(`span.cpu-folder-${id}`).first(), $m = $row.find(`span.mem-folder-${id}`).first();
+    const local = {
+      cpu: parseFloat(String($c.attr('data-sv-local') ?? $c.text()).replace(',', '.')) || 0,
+      mem: String($m.attr('data-sv-local') ?? $m.text()).split('/').map((x) => memToB(x.trim())),
+    };
+    return { remote, hasLocal, local, $c, $m };
+  }
+
+  function updateFolder(row) {
+    const m = String(row.className).match(/(?:^|\s)folder-id-(\S+)/);
+    if (!m || !SV.data) return;
+    const id = m[1];
+    const $row = $(row);
+    const { remote, hasLocal, local, $c, $m } = folderParts(id, $row);
+    const $td = $row.children('td.folder-advanced');
+    const anyRemote = $(`tr.sv-remote-row.folder-${id}-element`).length > 0;
+    if (!anyRemote) { $td.removeAttr('title'); return; }
+
+    // Pro Node zusammenfassen
+    const me = selfNode();
+    const per = new Map();
+    if (hasLocal) per.set(me.hostname || 'lokal', { cores: local.cpu / 100 * (me.cpus || 1), ncpu: me.cpus || 1, used: local.mem[0] || 0, lim: local.mem[1] || 0 });
+    for (const l of remote) {
+      const e = per.get(l.node) || { cores: 0, ncpu: l.ncpu, used: 0, lim: 0, noMem: false };
+      e.cores += l.cores; e.used += l.usedB; e.lim = Math.max(e.lim, l.limB); e.noMem = e.noMem || l.noMem;
+      per.set(l.node, e);
+    }
+    const lines = [...per].map(([n, e]) => `${n}: ${pct(e.cores / e.ncpu * 100)} von ${e.ncpu} Kernen · `
+      + (e.noMem ? 'RAM nicht messbar (cgroup_enable=memory fehlt)' : `${bToMem(e.used)}${e.lim ? ' / ' + bToMem(e.lim) : ''}`));
+    const missing = $(`tr.sv-remote-row.folder-${id}-element`).length - remote.length;
+    if (missing > 0) lines.push(`(${missing} Container ohne Messwerte)`);
+
+    if (cfg().folderLoad === 'local') {
+      // Zurück zu Folder Views Werten, falls wir vorher die Summe geschrieben hatten
+      for (const $s of [$c, $m]) if ($s.attr('data-sv-written') && $s.text() === $s.attr('data-sv-written')) $s.text($s.attr('data-sv-local'));
+      $td.attr('title', `Nur lokal. Mit anderen Nodes:\n${lines.join('\n')}`);
+      return;
+    }
+    let cores = 0, ncpu = 0, used = 0, lim = 0;
+    for (const e of per.values()) { cores += e.cores; ncpu += e.ncpu; if (!e.noMem) { used += e.used; lim += e.lim; } }
+    const cpu = ncpu ? Math.min(cores / ncpu * 100, 100) : 0;
+    const cpuText = pct(cpu), memText = `${bToMem(used)} / ${bToMem(lim)}`;
+    if ($c.attr('data-sv-local') === undefined) $c.attr('data-sv-local', $c.text());
+    if ($m.attr('data-sv-local') === undefined) $m.attr('data-sv-local', $m.text());
+    $c.attr('data-sv-written', cpuText).text(cpuText);
+    $m.attr('data-sv-written', memText).text(memText);
+    $row.find(`[id="cpu-folder-${id}"]`).css('width', cpuText);
+    $td.attr('title', `Gesamt über ${per.size} Node${per.size === 1 ? '' : 's'} (${ncpu} Kerne):\n${lines.join('\n')}`);
+  }
+
+  function watchFolder(row) {
+    if (row.__svLoadObs) return;
+    const obs = new MutationObserver((muts) => {
+      for (const mu of muts) {
+        const span = mu.target.nodeType === 1 ? mu.target : mu.target.parentElement;
+        if (!span || !/(?:^|\s)(cpu|mem)-folder-/.test(span.className)) continue;
+        // Nicht unser eigener Schreibvorgang → Folder View hat neue lokale Werte geliefert
+        if (span.textContent !== span.getAttribute('data-sv-written')) span.setAttribute('data-sv-local', span.textContent);
+      }
+      if (muts.some((mu) => { const sp = mu.target.nodeType === 1 ? mu.target : mu.target.parentElement; return sp && sp.textContent !== sp.getAttribute('data-sv-written'); })) updateFolder(row);
+    });
+    const td = $(row).children('td.folder-advanced').get(0);
+    if (!td) return;
+    obs.observe(td, { childList: true, characterData: true, subtree: true });
+    row.__svLoadObs = obs;
+  }
+
+  function updateLoads() {
+    if (!SV.data) return;
+    updateRemoteLoads();
+    $('#docker_list > tr.folder').each(function () { watchFolder(this); updateFolder(this); });
+  }
+
+  /** Pi-Container im DOM aktuell halten – Zeilen bleiben erhalten (auch wenn Folder View sie in Ordner verschoben hat) */
+  function syncRemoteRows() {
+    const list = document.getElementById('docker_list');
+    if (!list) return;
+    const mode = cfg().remoteRows;
+    const tasks = mode === 'never' ? [] : remoteTasks();
+    remoteIndex = Object.fromEntries(tasks.map((r) => [r.elId, r]));
+    const want = new Map(tasks.map((r) => [r.name, r]));
+
+    $(list).find('tr.sv-remote-row').each(function () {
+      const name = this.getAttribute('data-sv-name');
+      const r = want.get(name);
+      if (!r) { $(this).remove(); return; }
+      const sig = rowSig(r, mode);
+      $(this).toggleClass('sv-adv', mode === 'advanced');
+      if (this.getAttribute('data-sv-sig') !== sig) {
+        this.innerHTML = remoteRowCells(r);
+        this.setAttribute('data-sv-sig', sig);
+      }
+      want.delete(name);
+    });
+    for (const r of want.values()) {
+      const tr = document.createElement('tr');
+      tr.className = 'sortable sv-remote-row' + (mode === 'advanced' ? ' sv-adv' : '');
+      tr.setAttribute('data-sv-name', r.name);
+      tr.setAttribute('data-sv-sig', rowSig(r, mode));
+      tr.innerHTML = remoteRowCells(r);
+      list.appendChild(tr);
+    }
+    // Mover nur zeigen, wenn Unraids Sortierung entsperrt ist
+    $(list).find('tr.sv-remote-row i.mover').toggle($.cookie && $.cookie('lockbutton') != null);
+  }
+
+  /**
+   * Folder-View-Ordnerzeile an die Host-Spalte anpassen (F2).
+   * Folder View setzt die Breite seiner Sammelzelle auf „Spaltenzahl − 5“ bzw. bei der Ordner-Option
+   * „Update-Spalte“ fest auf 6. Beides geht von 10 Spalten aus. Statt mit einer festen Zahl zu rechnen,
+   * wird die CPU-Zelle des Ordners auf die Position der Spalte „Prozessor/Speicher“ geschoben und
+   * dahinter eine leere Host-Zelle eingefügt.
+   */
+  function fixFolderRow(tr, $tbl) {
+    const ths = $tbl.find('thead tr').first().children('th').get();
+    const loadIdx = ths.findIndex((th) => th.classList.contains('load'));
+    const cpu = $(tr).children('td.folder-advanced').get(0);
+    if (loadIdx < 0 || !cpu) return;
+    let pos = 0;
+    for (const td of $(tr).children('td').get()) {
+      if (td === cpu) break;
+      pos += +td.getAttribute('colspan') || 1;
+    }
+    const diff = loadIdx - pos;
+    if (diff) {
+      const wide = $(tr).children('td').filter((i, td) => $(td).children('div.folder-storage').length).get(0)
+        || $(cpu).prevAll('td[colspan]').get(0);
+      if (wide) wide.setAttribute('colspan', Math.max(1, (+wide.getAttribute('colspan') || 1) + diff));
+    }
+    if (!$(cpu).next('td.sv-hostcol').length) $(cpu).after('<td class="sv-adv sv-hostcol"></td>');
+  }
+
+  /** Lokale Swarm-Container in Unraids Liste: Update-Status (C5) und Hinweis zu Start/Stopp (C6) */
+  function localSwarmRow($tr) {
+    const name = $tr.find('.appname').first().text().trim();
+    const c = SV.data && (SV.data.containers || {})[name];
+    if (!c || !c.swarmService) return;
+    const sv = findService(c.swarmService) || {};
+    const $u = $tr.children('td.updatecolumn');
+    const html = sv.update ? '<span class="orange-text" style="white-space:nowrap"><i class="fa fa-flash fa-fw"></i> Update verfügbar</span>'
+      : sv.update === false ? '<span class="green-text" style="white-space:nowrap"><i class="fa fa-check fa-fw"></i> aktuell</span>' : '';
+    let $line = $u.children('div.sv-updline');
+    if (!$line.length) $line = $('<div class="sv-updline"></div>').prependTo($u);
+    if ($line.html() !== html) $line.html(html);
+    $tr.find('td.ct-name span.state').first().attr('title', SWARM_STOP_HINT);
+    setAlias($tr.find('td.ct-name .appname').get(0), aliasFor(sv, (name.slice(c.swarmService.length + 1).split('.')[0]) || ''), name);
+  }
+
+  /* ---------- Verwaiste Images (Unraid: tr.advanced mit addDockerImageContext) ausblenden ---------- */
+  const ORPHAN_KEY = 'swarmview_orphans_show';
+  const normImg = (s) => String(s || '').trim().replace(/@sha256:[0-9a-f]+$/i, '').replace(/^docker\.io\//, '').replace(/^library\//, '')
+    .replace(/^([^/:]+)$/, '$1:latest').replace(/^([^:]*\/[^/:]+)$/, '$1:latest');
+  function hideOrphans($tbl) {
+    const mode = cfg().orphans || 'swarm';
+    const $rows = $('#docker_list > tr').filter(function () { return $(this).find('span[onclick^="addDockerImageContext"]').length > 0; });
+    $('#docker_list > tr.sv-orphan-sum').remove();
+    $rows.removeClass('sv-orphan-hidden');
+    if (mode === 'show' || !$rows.length) return;
+    const swarmImgs = new Set();
+    for (const st of (SV.data && SV.data.stacks) || []) for (const sv of st.services) swarmImgs.add(normImg(sv.image));
+    let reserve = 0, old = 0, other = 0;
+    const hide = $rows.filter(function () {
+      const m = String($(this).find('span[onclick^="addDockerImageContext"]').attr('onclick')).match(/addDockerImageContext\('[^']*','([^']*)'\)/);
+      const tags = (m ? m[1] : '').split(',').map((t) => t.trim()).filter(Boolean);
+      if (!tags.length) { old++; return true; }
+      if (tags.some((t) => swarmImgs.has(normImg(t)))) { reserve++; return true; }
+      if (mode === 'hide') { other++; return true; }
+      return false;
+    });
+    if (!hide.length) return;
+    let show = false;
+    try { show = sessionStorage.getItem(ORPHAN_KEY) === '1'; } catch (e) { /* egal */ }
+    if (!show) hide.addClass('sv-orphan-hidden');
+    const parts = [reserve && `${reserve} Reserve für Swarm-Services`, old && `${old} alte Version${old === 1 ? '' : 'en'} ohne Namen`, other && `${other} weitere`].filter(Boolean);
+    const cols = $tbl.find('thead tr').first().children('th').length || 10;
+    const $sum = $(`<tr class="sv-orphan-sum advanced"><td colspan="${cols}"><a href="#" class="sv-orphan-toggle"><i class="fa fa-eye${show ? '-slash' : ''} fa-fw"></i>
+      ${hide.length} verwaiste Image${hide.length === 1 ? '' : 's'} ${show ? 'eingeblendet' : 'ausgeblendet'}</a> <span class="sv-dim">(${parts.join(', ')}) · ${show ? 'wieder ausblenden' : 'anzeigen'}</span></td></tr>`);
+    $sum.insertBefore(hide.first());
+    // Unraid blendet .advanced beim Ansichtswechsel per jQuery ein/aus – die Zeile folgt der Ansicht wie die Image-Zeilen
+    $sum.toggle(isAdvancedView());
+  }
+  const isAdvancedView = () => $('body').hasClass('sv-advanced');
+  $(document).on('click', '.sv-orphan-toggle, .sv-orphan-sum .sv-dim', function (e) {
+    e.preventDefault();
+    let show = false;
+    try { show = sessionStorage.getItem(ORPHAN_KEY) === '1'; sessionStorage.setItem(ORPHAN_KEY, show ? '0' : '1'); } catch (er) { /* egal */ }
+    hideOrphans($('#docker_containers'));
+  });
+
+  function decorateDockerTable() {
+    const list = document.getElementById('docker_list');
+    const $tbl = $('#docker_containers');
+    if (!list || !$tbl.length) return;
+    if (observer) observer.disconnect();
+    hookFolderView();
+
+    const withHost = cfg().hostColumn;
+    if (!withHost) {
+      // Spalte (falls vorher aktiv) wieder entfernen
+      $tbl.find('thead th.sv-hostcol').remove();
+      $('#docker_list > tr:not(.sv-remote-row)').children('td.sv-hostcol').remove();
+    }
+    // Kopfzeile: "Host" hinter "CPU & Memory load"
+    if (withHost && !$tbl.find('thead th.sv-hostcol').length) {
+      const $load = $tbl.find('thead th.load');
+      const $th = $('<th class="sv-adv sv-hostcol">Host</th>');
+      if ($load.length) $load.after($th); else $tbl.find('thead th').eq(7).after($th);
+    }
+
+    $('#docker_list > tr').each(function () {
+      const $tr = $(this);
+      if ($tr.hasClass('sv-remote-row')) return;                              // eigene Zeilen
+      if ($tr.hasClass('folder')) { if (withHost) fixFolderRow(this, $tbl); return; } // Folder-View-Ordner
+      if ($tr.hasClass('sortable') && /^swarm-view-(agent|cleanup)\./.test($tr.find('.appname').first().text().trim())) {
+        $tr.hide().next('tr.advanced').hide();
+        return;
+      }
+      if ($tr.hasClass('sortable')) {
+        localSwarmRow($tr);
+        if (!withHost) return;
+        let $td = $tr.children('td.sv-hostcol');
+        if (!$td.length) {
+          $td = $('<td class="sv-adv sv-hostcol"></td>');
+          const $cpu = $tr.children('td.advanced').last();
+          ($cpu.length ? $cpu : $tr.children('td').eq(7)).after($td);
+        }
+        $td.html(hostCell($tr.find('.appname').first().text().trim()));
+      } else if (withHost && !this.svFixed) {
+        const $c = $tr.children('td[colspan]').last();
+        if ($c.length) $c.attr('colspan', (+$c.attr('colspan') || 1) + 1);
+        this.svFixed = true;
+      }
+    });
+
+    syncRemoteRows();
+    updateLoads();
+    hideOrphans($tbl);
+    // Schriftgröße für Anzeigenamen der eigenen Zeilen von einem normalen Namen übernehmen
+    const ref = $('#docker_list tr:not(.sv-remote-row) .appname:not([data-sv-alias])').get(0);
+    const fs = ref ? getComputedStyle(ref).fontSize : '';
+    $('#docker_list tr.sv-remote-row .appname[data-sv-alias]').each(function () {
+      if (!this.style.getPropertyValue('--sv-fs')) this.style.setProperty('--sv-fs', fs || getComputedStyle(this.parentElement).fontSize);
+    });
+    // Ordner-Vorschauen von Folder View (geklonte Namen) ebenfalls umbenennen
+    const am = aliasMap();
+    $('#docker_list .folder-preview span.appname').each(function () {
+      const real = $(this).text().trim();
+      setAlias(this, am.get(real) || (this.hasAttribute('data-sv-alias') ? '' : null), real);
+    });
+
+    if (!observer) observer = new MutationObserver(() => decorateDockerTable());
+    observer.observe(list, { childList: true });
+  }
+
+  /* ---------- Kontextmenü für Pi-Container (wie Unraids addDockerContainerContext) ---------- */
+  window.svRemoteContext = function (elId, target) {
+    const r = remoteIndex[elId];
+    if (!r || typeof context === 'undefined') return;
+    const opts = [];
+    if (r.running && r.webui) {
+      opts.push({ text: 'WebUI', icon: 'fa-globe', action: (e) => { e.preventDefault(); window.open(r.webui, '_blank'); } });
+      opts.push({ divider: true });
+    }
+    if (r.update) opts.push({ text: 'Update', icon: 'fa-flash', action: (e) => { e.preventDefault(); serviceAction('svc-update', r.service); } });
+    if (r.canRollback) opts.push({ text: `Rollback auf ${r.rollbackTo || 'vorherige Version'}`, icon: 'fa-undo', action: (e) => { e.preventDefault(); serviceAction('svc-rollback', r.service); } });
+    opts.push({
+      text: 'Neustart', icon: 'fa-refresh', action: (e) => {
+        e.preventDefault();
+        confirmBox(`„${r.service}“ neu starten?`, 'Der Service wird mit --force neu ausgerollt (alle Replicas).', () => {
+          post({ action: 'svc-restart', service: r.service })
+            .done((res) => showResult(`Neustart: ${r.service}`, res))
+            .fail((x) => showResult(`Neustart: ${r.service}`, failResult(x)))
+            .always(() => { SV.load(); setTimeout(SV.load, 4000); });
+        });
+      },
+    });
+    const svObj = findService(r.service);
+    if (svObj && svObj.mode !== 'global' && SV.data.nodes.length > 1) {
+      for (const n of SV.data.nodes) {
+        if (n.hostname === r.node || !nodeCheck(svObj, n).ok) continue;
+        opts.push({ text: `Auf ${n.hostname} verschieben (fest)`, icon: 'fa-exchange', action: (e) => { e.preventDefault(); placeService(svObj.name, `fixed:${n.hostname}`); } });
+      }
+    }
+    opts.push({ divider: true });
+    opts.push({ text: 'Logs', icon: 'fa-navicon', action: (e) => { e.preventDefault(); openLogs(r); } });
+    if (r.managed) {
+      opts.push({
+        text: 'Stack bearbeiten', icon: 'fa-wrench', action: (e) => {
+          e.preventDefault();
+          openEditor(r.stack);
+        },
+      });
+    }
+    opts.push({ divider: true });
+    opts.push({ text: `Läuft auf: ${r.node}`, icon: 'fa-external-link', action: (e) => e.preventDefault() });
+    context.settings({ right: false, above: false });
+    const sel = '#' + (target || elId);
+    context.destroy(sel);
+    context.attach(sel, opts);
+  };
+
+  /* ---------- Log-Fenster ---------- */
+  let logTask = null;
+  function ensureLogBox() {
+    if ($('#sv-logbox').length) return;
+    $('body').append(`<div id="sv-logbox" style="display:none">
+      <div class="sv-logbox-inner">
+        <div class="sv-logbox-head"><b id="sv-logbox-title"></b>
+          <span class="sv-right">
+            <input type="button" id="sv-logbox-refresh" value="Aktualisieren">
+            <input type="button" id="sv-logbox-close" value="Schließen">
+          </span></div>
+        <pre id="sv-logbox-text" class="sv-log"></pre>
+      </div></div>`);
+    $('#sv-logbox-close').on('click', () => { $('#sv-logbox').hide(); logTask = null; });
+    $('#sv-logbox-refresh').on('click', () => logTask && fetchLogs(logTask));
+    $('#sv-logbox').on('click', (e) => { if (e.target.id === 'sv-logbox') $('#sv-logbox-close').trigger('click'); });
+  }
+  function fetchLogs(r) {
+    $('#sv-logbox-text').text('Lade Logs …');
+    post({ action: 'logs', task: r.taskId, tail: 500 })
+      .done((res) => {
+        const $p = $('#sv-logbox-text').text(res.log || res.error || '');
+        $p.scrollTop($p[0].scrollHeight);
+      })
+      .fail((x) => $('#sv-logbox-text').text(failResult(x).error));
+  }
+  function openLogs(r) {
+    ensureLogBox();
+    logTask = r;
+    $('#sv-logbox-title').text(`${r.name} @ ${r.node}`);
+    // Theme-Hintergrund übernehmen (hell/dunkel)
+    const bg = getComputedStyle(document.body).backgroundColor;
+    if (bg && !/rgba\(0, 0, 0, 0\)|transparent/.test(bg)) $('#sv-logbox .sv-logbox-inner').css('background', bg);
+    $('#sv-logbox').show();
+    fetchLogs(r);
+  }
+
+  /* ---------- Folder View: Pi-Container in die Container-Liste einschleusen ---------- */
+  function hookFolderView() {
+    let fe;
+    try { fe = folderEvents; } catch (e) { return; } // Folder View (2) nicht installiert
+    if (!fe || fe.__svHooked) return;
+    fe.__svHooked = true;
+    fe.addEventListener('docker-pre-folders-creation', (ev) => {
+      const { order, containersInfo, folders } = ev.detail || {};
+      if (!Array.isArray(order) || !containersInfo) return;
+      for (const r of Object.values(remoteIndex)) {
+        if (!containersInfo[r.name]) {
+          containersInfo[r.name] = {
+            Id: `swarm-${r.taskId}`,
+            shortId: r.sid,
+            shortImageId: '',
+            Labels: r.labels,
+            Mounts: r.mounts.map((m) => ({ Type: 'bind', Source: m.source, Destination: m.target })),
+            info: {
+              Name: r.name,
+              State: { Running: r.running, Paused: false, Autostart: false, Updated: true, manager: 'swarm', WebUi: r.webui, TSWebUi: '' },
+              Config: { Image: r.image },
+              Ports: r.ports.map((p) => ({ PrivatePort: p.target, PublicPort: p.published, Type: p.proto })),
+              registry: '', Support: '', Project: '', ReadMe: '', DonateLink: '', Shell: 'sh', template: null,
+            },
+          };
+        }
+        if (!order.includes(r.name)) order.push(r.name);
+      }
+      // Anzeigenamen für Ordner: Regex oder Containerliste eines Ordners darf auch den Anzeigenamen meinen.
+      // Der echte Name wird dafür nur im Speicher (nicht gespeichert) in die Liste des Ordners aufgenommen.
+      const am = aliasMap();
+      if (folders && am.size) {
+        for (const f of Object.values(folders)) {
+          if (!f) continue;
+          if (!Array.isArray(f.containers)) f.containers = [];
+          let re = null;
+          try { if (f.regex && String(f.regex).trim()) re = new RegExp(f.regex); } catch (e) { re = null; }
+          for (const [real, alias] of am) {
+            if (!order.includes(real) || f.containers.includes(real)) continue;
+            if ((re && !re.test(real) && re.test(alias)) || f.containers.includes(alias)) f.containers.push(real);
+          }
+        }
+      }
+    });
+  }
+
+  Object.assign(SV, { decorateDockerTable, remoteTasks, hookFolderView, openLogs });
+  SV.start();
+})(jQuery);
+]]></INLINE>
+</FILE>
+<FILE Name="&plugdir;/js/stacks.js">
+<INLINE><![CDATA[/* Swarm View – Swarm-Stacks-Leiste: Nodes, Stacks, Services, Aktionen, Editor */
+(function ($) {
+  'use strict';
+
+  const SV = window.SwarmView;
+  const { esc, isOpen, setOpen, placeBadge, aggregateBadges, replicaSum, replicaClass, statusIcon, findService, nodeCheck, placeSelect, placeService, post, failResult, showResult, confirmBox } = SV;
+
+  const LABELS = { deploy: 'Stack Up', update: 'Update Stack', remove: 'Stack Down', restart: 'Neustart', delete: 'Löschen', save: 'Speichern' };
+
+  /* ---------- 1) Swarm-Stacks-Leiste ---------- */
+  function renderMsg() {
+    const $m = $('#sv-msg');
+    const s = SV.data.swarm;
+    if (SV.data.errors && SV.data.errors.length) {
+      $m.attr('class', 'sv-msg error').html(SV.data.errors.map(esc).join('<br>')).show();
+    } else if (!s.active) {
+      $m.attr('class', 'sv-msg info')
+        .html('Swarm ist auf diesem Host nicht aktiv. Initialisieren mit <code>docker swarm init --advertise-addr &lt;Unraid-IP&gt;</code>.')
+        .show();
+    } else if (!s.manager) {
+      $m.attr('class', 'sv-msg info').text('Dieser Host ist nur Worker – Stacks sind nur auf einem Manager sichtbar.').show();
+    } else {
+      $m.hide();
+    }
+  }
+
+  /* ---------- Kopfbereich: Zusammenfassung + Node-Karten ---------- */
+  const bar = (label, pct) => {
+    const v = Math.max(0, Math.min(100, Math.round(+pct || 0)));
+    const cls = v >= 90 ? 'sv-bar-bad' : v >= 70 ? 'sv-bar-warn' : '';
+    return `<div class="sv-meter"><span class="sv-meter-label">${label}</span><span class="sv-meter-track"><span class="sv-meter-fill ${cls}" style="width:${v}%"></span></span><span class="sv-meter-val">${v} %</span></div>`;
+  };
+
+  function nodeCard(n) {
+    const st = (((SV.data.stats || {}).nodes) || {})[n.hostname];
+    const role = n.role === 'manager' ? (n.leader ? 'Manager' : 'Manager (Reserve)') : 'Worker';
+    const down = n.state !== 'ready';
+    const maint = !down && n.availability !== 'active';
+    const labels = Object.entries(n.labels || {}).map(([k, v]) => `${k}=${v}`).join(', ');
+    const tip = esc(`${n.addr} · ${n.arch} · Docker ${n.engine}${labels ? ' · ' + labels : ''}`);
+    const state = down ? '<span class="sv-bad">nicht erreichbar</span>'
+      : maint ? `<span class="sv-warn">${n.availability === 'drain' ? 'Wartung' : 'pausiert'}</span>` : '<span class="sv-ok">bereit</span>';
+    const statsOn = (SV.data.stats || {}).enabled;
+    const since = st && st.ts ? new Date(st.ts * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '';
+    const load = !statsOn ? '<div class="sv-card-note sv-dim">Auslastung: CPU/RAM-Agent in den Einstellungen einschalten</div>'
+      : down ? `<div class="sv-card-note sv-bad">Node nicht erreichbar${since ? ` – letzte Werte ${since} Uhr` : ''}</div>`
+        : !st ? '<div class="sv-card-note sv-warn">Agent liefert noch keine Werte (startet nach einem Neustart des Nodes neu)</div>'
+          : st.stale ? `<div class="sv-card-note sv-warn">keine aktuellen Werte${since ? ` – letzte ${since} Uhr` : ''}</div>`
+            : bar('CPU', st.cpu) + bar('RAM', st.mem);
+    return `<div class="sv-card${down ? ' sv-card-down' : ''}" title="${tip}">
+      <div class="sv-card-head"><i class="fa ${n.self ? 'fa-server' : 'fa-external-link'}"></i><b>${esc(n.hostname)}</b>
+        <span class="sv-dim">${esc(role)} · ${n.cpus} CPU · ${n.memGB} GB</span><span class="sv-card-state">${state}</span></div>
+      ${load}</div>`;
+  }
+
+  function renderNodes() {
+    if (!SV.data.nodes.length) { $('#sv-nodes').empty(); return; }
+    const services = SV.data.stacks.flatMap((st) => st.services);
+    const tasks = services.flatMap((sv) => sv.tasks);
+    const remote = tasks.filter((t) => t.node && !t.local && /^running/i.test(t.current)).length;
+    const upd = services.filter((sv) => sv.update).length;
+    const nStacks = SV.data.stacks.filter((st) => st.name !== '(ohne Stack)').length;
+    const parts = [`${nStacks} Stack${nStacks === 1 ? '' : 's'}`, `${services.length} Service${services.length === 1 ? '' : 's'}`,
+      `${remote} Container ausgelagert`];
+    if (upd) parts.push(`<span class="sv-upd">${upd} Update${upd === 1 ? '' : 's'}</span>`);
+    $('#sv-nodes').html(`<div class="sv-summary">${parts.join(' · ')}</div><div class="sv-cards">${SV.data.nodes.map(nodeCard).join('')}</div>`);
+  }
+
+  /* ---------- Update / Rollback / bevorzugter Node ---------- */
+  function serviceAction(act, svc) {
+    const short = (findService(svc) || {}).short || svc;
+    const texts = {
+      'svc-update': [`„${short}“ aktualisieren?`, 'Die neueste Image-Version wird geholt und der Service neu ausgerollt.'],
+      'svc-rollback': [`„${short}“ zurücksetzen?`, `Rollback auf ${(findService(svc) || {}).rollbackTo || 'die vorherige Version'} (docker service rollback).`],
+    };
+    confirmBox(texts[act][0], texts[act][1], () => {
+      SV.busy = true;
+      $('.sv-svc-act').prop('disabled', true);
+      post({ action: act, service: svc })
+        .done((r) => showResult(act === 'svc-update' ? `Update: ${short}` : `Rollback: ${short}`, r))
+        .fail((x) => showResult(short, failResult(x)))
+        .always(() => { SV.busy = false; SV.load(); setTimeout(SV.load, 4000); });
+    });
+  }
+
+  /* ---------- Menüs (Unraids Kontextmenü, wie bei den Container-Icons) ---------- */
+  function attachMenu(el, opts) {
+    if (typeof context === 'undefined' || !el.id) return;
+    context.settings({ right: false, above: 'auto' });
+    context.destroy('#' + el.id);
+    context.attach('#' + el.id, opts);
+  }
+  const item = (text, icon, fn) => ({ text, icon, action: (e) => { e.preventDefault(); fn(); } });
+
+  function restartService(sv) {
+    confirmBox(`„${sv.short}“ neu starten?`, 'Der Service wird mit --force neu ausgerollt (alle Replicas).', () => {
+      post({ action: 'svc-restart', service: sv.name })
+        .done((r) => showResult(`Neustart: ${sv.short}`, r))
+        .fail((x) => showResult(`Neustart: ${sv.short}`, failResult(x)))
+        .always(() => { SV.load(); setTimeout(SV.load, 4000); });
+    });
+  }
+
+  /** ⋮ an einer Service-Zeile */
+  SV.serviceMenu = function (el) {
+    const sv = findService(String($(el).data('service')));
+    if (!sv || SV.busy) return;
+    const opts = [];
+    if (sv.update) opts.push(item('Update', 'fa-flash', () => serviceAction('svc-update', sv.name)));
+    if (sv.canRollback) opts.push(item(`Rollback auf ${sv.rollbackTo || 'vorherige Version'}`, 'fa-undo', () => serviceAction('svc-rollback', sv.name)));
+    opts.push(item('Neustart', 'fa-refresh', () => restartService(sv)));
+    if (sv.mode !== 'global' && SV.data.nodes.length > 1) {
+      const on = new Set(sv.tasks.map((t) => t.node));
+      for (const n of SV.data.nodes) {
+        if ((on.size === 1 && on.has(n.hostname)) || !nodeCheck(sv, n).ok) continue;
+        opts.push(item(`Auf ${n.hostname} verschieben (fest)`, 'fa-exchange', () => placeService(sv.name, `fixed:${n.hostname}`)));
+      }
+      if (sv.placeNode || sv.prefer) opts.push(item('Automatisch platzieren', 'fa-random', () => placeService(sv.name, '')));
+    }
+    const logTasks = sv.tasks.filter((t) => t.node && t.id);
+    if (logTasks.length) {
+      opts.push({ divider: true });
+      for (const t of logTasks.slice(0, 6)) {
+        opts.push(item(logTasks.length > 1 ? `Logs (${t.node}${t.slot ? ' #' + t.slot : ''})` : 'Logs', 'fa-navicon',
+          () => SV.openLogs({ taskId: t.id, name: `${sv.name}${t.slot ? '.' + t.slot : ''}`, node: t.node })));
+      }
+    }
+    attachMenu(el, opts);
+  };
+
+  /** Zahnrad an einer Stack-Zeile */
+  SV.stackMenu = function (el) {
+    const name = String($(el).data('name'));
+    const e = stackList().find((x) => x.name === name);
+    if (!e || SV.busy) return;
+    const opts = [];
+    if (e.managed) {
+      opts.push(item('Bearbeiten', 'fa-wrench', () => openEditor(name)));
+      opts.push(item('Beschreibung', 'fa-pencil', () => editDescription(name)));
+    }
+    if (e.st) opts.push(item('Neustart', 'fa-refresh', () => stackAction('restart', name)));
+    if (e.managed && !e.st) {
+      opts.push({ divider: true });
+      opts.push(item('Dateien löschen', 'fa-trash', () => deleteStack(name)));
+    }
+    attachMenu(el, opts);
+  };
+
+  function editDescription(name) {
+    const cur = (((SV.data.stackInfo || {})[name]) || {}).description || '';
+    const save = (v) => {
+      if (v === false || v === null) return;
+      post({ action: 'describe', name, description: String(v).trim() })
+        .done((r) => { if (!r.ok) showResult('Beschreibung', r); SV.load(); })
+        .fail((x) => showResult('Beschreibung', failResult(x)));
+    };
+    if (typeof swal === 'function') {
+      swal({
+        title: `Beschreibung für „${name}“`, text: 'Erscheint unter dem Stack-Namen (leer = keine).', type: 'input',
+        showCancelButton: true, closeOnConfirm: true, inputValue: cur,
+        confirmButtonText: 'Speichern', cancelButtonText: 'Abbrechen',
+      }, (v) => setTimeout(() => save(v), 150));
+    } else {
+      save(prompt(`Beschreibung für „${name}“:`, cur));
+    }
+  }
+
+  function deleteStack(name) {
+    confirmBox(`Stack-Dateien „${name}“ löschen?`, 'docker-stack.yml, .env und Beschreibung werden vom USB-Stick entfernt.', () => {
+      post({ action: 'delete', name })
+        .done((r) => { if (r.ok) { if (edName === name) closeEditor(); SV.load(); } showResult(`Löschen: ${name}`, r); })
+        .fail((x) => showResult(`Löschen: ${name}`, failResult(x)));
+    });
+  }
+
+  /** Deployte + von Swarm View verwaltete Stacks zusammenführen */
+  function stackList() {
+    const deployed = new Map(SV.data.stacks.map((s) => [s.name, s]));
+    const managed = new Set(SV.data.managed || []);
+    const names = [...new Set([...deployed.keys(), ...managed])].sort((a, b) =>
+      (a === '(ohne Stack)') - (b === '(ohne Stack)') || a.localeCompare(b));
+    return names.map((n) => ({ name: n, st: deployed.get(n) || null, managed: managed.has(n) }));
+  }
+
+  const btn = (act, name, label, enabled = true) =>
+    `<input type="button" class="sv-act" data-act="${act}" data-name="${esc(name)}" value="${label}"${SV.busy || !enabled ? ' disabled' : ''}>`;
+
+  /** Registry weglassen: "ghcr.io/music-assistant/server:latest" → "music-assistant/server:latest" */
+  const shortImage = (img) => {
+    let s = String(img || '');
+    const parts = s.split('/');
+    if (parts.length > 1 && /[.:]|^localhost$/.test(parts[0])) s = parts.slice(1).join('/');
+    s = s.replace(/^library\//, '');
+    return s.slice(s.lastIndexOf('/') + 1).includes(':') ? s : `${s}:latest`;
+  };
+  // Platzierungsregeln aus der Datei; node.hostname zeigt schon die Auswahl
+  const extraConstraints = (sv) => (sv.constraints || []).filter((c) => !/^\s*node\.hostname\s*==/.test(c));
+
+  let menuSeq = 0;
+  const COLS = 5;
+
+  function serviceRow(name, sv, open) {
+    const m = String(sv.replicas || '').match(/^(\d+)\/(\d+)/);
+    const rc = m ? replicaClass(+m[1], +m[2]) : '';
+    const cons = extraConstraints(sv);
+    const tip = esc([sv.ports && `Ports: ${sv.ports}`, cons.length && `Regeln: ${cons.join(', ')}`].filter(Boolean).join('\n'));
+    const badges = (sv.update ? ' <span class="sv-badge sv-upd-badge" title="Neuere Image-Version in der Registry – Update über ⋮"><i class="fa fa-flash"></i>Update</span>' : '')
+      + (sv.prefer ? ` <span class="sv-badge sv-label" title="Bevorzugter Node (Label swarm-view.prefer)"><i class="fa fa-star"></i>${esc(sv.prefer)}</span>` : '')
+      + (sv.rebalancing ? ' <span class="sv-badge sv-pending"><i class="fa fa-exchange"></i>kehrt zurück …</span>' : '');
+    const id = `sv-menu-${++menuSeq}`;
+    return `<tr class="sv-svc${open ? ' sv-open' : ''}" data-stack="${esc(name)}">
+      <td class="sv-svcname"${tip ? ` title="${tip}"` : ''}><b>${esc(sv.short)}</b>${sv.mode === 'global' ? ' <span class="sv-dim">(global)</span>' : ''}${badges}${sv.ports ? `<span class="sv-adv sv-dim sv-mono sv-ports">${esc(sv.ports)}</span>` : ''}</td>
+      <td class="${rc}">${esc(sv.replicas)}</td>
+      <td class="sv-where"><span class="sv-where-badges">${sv.tasks.length ? sv.tasks.map(placeBadge).join('') : '<span class="sv-dim">–</span>'}</span>${placeSelect(sv)}${cons.length ? `<div class="sv-adv sv-cons">${cons.map(esc).join(' · ')}</div>` : ''}</td>
+      <td class="sv-cmds"><i class="fa fa-ellipsis-v sv-menu" id="${id}" data-service="${esc(sv.name)}" title="Aktionen" onclick="SwarmView.serviceMenu(this)"></i></td>
+      <td class="sv-adv sv-image" title="${esc(sv.image)}"><span class="sv-mono">${esc(shortImage(sv.image))}</span>${sv.update ? ' <i class="fa fa-flash sv-upd" title="Update verfügbar"></i>' : ''}</td>
+    </tr>`;
+  }
+
+  function renderStacks() {
+    const $tb = $('#sv-stacks tbody');
+    if (document.activeElement && $(document.activeElement).is('#sv-stacks .sv-place')) return;
+    if ($('.dropdown-context:visible').length) return; // offenes Menü nicht unter dem Mauszeiger wegrendern
+    const swarmOk = SV.data.swarm.active && SV.data.swarm.manager;
+    $('#sv-add, #sv-cleanup').prop('disabled', !swarmOk || SV.busy);
+    const hl = SV.data.swarm.historyLimit;
+    $('#sv-history').html(hl != null && hl > 1
+      ? `Swarm behält bis zu ${hl} Container pro Service – <a href="/Settings/SwarmViewSettings">in den Einstellungen auf 1 stellen</a>` : '');
+    if (!swarmOk) {
+      $tb.html(`<tr class="sv-empty"><td colspan="${COLS}">Keine Swarm-Stacks verfügbar (Swarm nicht aktiv oder kein Manager)</td></tr>`);
+      return;
+    }
+    const list = stackList();
+    if (!list.length) {
+      $tb.html(`<tr class="sv-empty"><td colspan="${COLS}">Noch keine Swarm-Stacks – unten mit „Add New Swarm Stack“ anlegen</td></tr>`);
+      return;
+    }
+    menuSeq = 0;
+    let rows = '';
+    for (const { name, st, managed } of list) {
+      const services = st ? st.services : [];
+      const tasks = services.flatMap((sv) => sv.tasks);
+      const { run, want } = replicaSum(services);
+      const open = !!st && isOpen(name);
+      const pseudo = name === '(ohne Stack)';
+      const info = (SV.data.stackInfo || {})[name] || {};
+
+      const icon = pseudo ? '<i class="fa fa-cubes sv-stackicon"></i>'
+        : `<i class="fa fa-cog sv-gear" id="sv-gear-${++menuSeq}" data-name="${esc(name)}" title="Stack-Aktionen" onclick="SwarmView.stackMenu(this)"></i>`;
+      const status = st ? statusIcon(run, want) : '<i class="fa fa-square red-text" style="margin-left:5px" title="nicht deployt"></i>';
+      const nUpd = services.filter((sv) => sv.update).length;
+      const desc = info.description ? `<div class="sv-desc">${esc(info.description)}</div>`
+        : !managed && !pseudo ? '<div class="sv-desc sv-dim">extern deployt</div>' : '';
+      const path = info.path ? `<div class="sv-path sv-dim sv-mono">${esc(info.path)}</div>` : '';
+
+      let cmds = '';
+      if (managed) cmds = btn('deploy', name, 'Stack Up') + btn('update', name, 'Update Stack', !!st) + btn('remove', name, 'Stack Down', !!st);
+      else if (st && !pseudo) cmds = btn('remove', name, 'Stack Down');
+
+      rows += `<tr class="sv-stack" data-stack="${esc(name)}">
+        <td class="sv-stackcell">
+          <i class="fa ${st ? `fa-chevron-${open ? 'down' : 'right'}` : 'fa-fw'} sv-caret"></i>${icon}<span class="sv-stackname">${esc(name)}</span>${status}
+          ${desc}${path}
+        </td>
+        <td>${st ? `<span class="${replicaClass(run, want)}">${run}/${want}</span><div class="sv-dim sv-small">${services.length} Service${services.length === 1 ? '' : 's'}${nUpd ? ` · <span class="sv-upd">${nUpd} Update${nUpd === 1 ? '' : 's'}</span>` : ''}</div>` : '<span class="sv-dim">nicht deployt</span>'}</td>
+        <td>${st ? aggregateBadges(tasks) : '<span class="sv-dim">–</span>'}</td>
+        <td class="sv-cmds">${cmds}</td>
+        <td class="sv-adv"></td>
+      </tr>`;
+      for (const sv of services) rows += serviceRow(name, sv, open);
+    }
+    $tb.html(rows);
+  }
+
+  $(document).on('click', '#sv-stacks tr.sv-stack', function (e) {
+    if ($(e.target).closest('.sv-act, .sv-gear, .sv-edit').length) return;
+    const name = String($(this).data('stack'));
+    const $svc = $('#sv-stacks tr.sv-svc').filter(function () { return String($(this).data('stack')) === name; });
+    if (!$svc.length) return;
+    const open = !isOpen(name);
+    setOpen(name, open);
+    $(this).find('.sv-caret').toggleClass('fa-chevron-right', !open).toggleClass('fa-chevron-down', open);
+    $svc.toggleClass('sv-open', open);
+  });
+
+  // Ansicht umgeschaltet → Standard für noch nicht angefasste Stacks ändert sich
+  $(document).on('change', 'input.advancedview', () => setTimeout(() => SV.data && renderStacks(), 0));
+
+  function runAction(act, name, $button) {
+    SV.busy = true;
+    $('.sv-act, #sv-editor input').prop('disabled', true);
+    const old = $button ? $button.val() : '';
+    if ($button) $button.val('läuft …');
+    const req = act === 'update' ? { action: 'deploy', mode: 'update', name } : { action: act, name };
+    post(req)
+      .done((r) => showResult(`${LABELS[act]}: ${name}`, r))
+      .fail((x) => showResult(`${LABELS[act]}: ${name}`, failResult(x)))
+      .always(() => {
+        SV.busy = false;
+        $('.sv-act, #sv-editor input').prop('disabled', false);
+        if ($button) $button.val(old);
+        SV.load();
+        // Swarm braucht ein paar Sekunden, bis Tasks laufen
+        setTimeout(SV.load, 4000);
+      });
+  }
+
+  function stackAction(act, name, $b) {
+    if (act === 'remove') {
+      confirmBox(`Stack „${name}“ herunterfahren?`, 'Alle Services des Stacks werden entfernt. Volumes und Daten bleiben erhalten.', () => runAction(act, name, $b));
+    } else if (act === 'update') {
+      confirmBox(`Stack „${name}“ aktualisieren?`, 'Swarm prüft für alle Services, ob es neuere Image-Versionen gibt, und rollt diese aus. Services ohne neue Version bleiben unverändert.', () => runAction(act, name, $b));
+    } else if (act === 'restart') {
+      confirmBox(`Stack „${name}“ neu starten?`, 'Alle Services werden mit --force neu ausgerollt.', () => runAction(act, name, $b));
+    } else {
+      runAction(act, name, $b);
+    }
+  }
+
+  $(document).on('click', '#sv-stacks .sv-act', function (e) {
+    e.stopPropagation();
+    stackAction($(this).data('act'), String($(this).data('name')), $(this));
+  });
+
+
+  /* ---------- Editor ---------- */
+  let edName = null;
+
+  function switchTab(file) {
+    $('.sv-ed-tab').removeClass('active').filter(`[data-file="${file}"]`).addClass('active');
+    $('#sv-ed-yml').toggle(file === 'yml');
+    $('#sv-ed-env').toggle(file === 'env');
+  }
+
+  function edLog(ok, text) {
+    $('#sv-ed-log').attr('class', `sv-log ${ok ? 'sv-log-ok' : 'sv-log-err'}`).text(text).show();
+  }
+
+  function openEditor(name, preload) {
+    const show = (r) => {
+      edName = name;
+      $('#sv-ed-name').text(name);
+      $('#sv-ed-path').text(r.path || '');
+      $('#sv-ed-yml').val(r.yml || '');
+      $('#sv-ed-env').val(r.env || '');
+      $('#sv-ed-log').hide();
+      $('#sv-ed-delete').toggle(!r.deployed);
+      switchTab('yml');
+      $('#sv-editor').show()[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+    if (preload) show(preload);
+    else post({ action: 'get', name }).done((r) => (r.ok ? show(r) : showResult('Fehler', r))).fail((x) => showResult('Fehler', failResult(x)));
+  }
+
+  function closeEditor() { edName = null; $('#sv-editor').hide(); }
+
+  function saveEditor() {
+    return post({ action: 'save', name: edName, yml: $('#sv-ed-yml').val(), env: $('#sv-ed-env').val() })
+      .done((r) => edLog(r.ok && r.valid, r.ok ? `Gespeichert. ${r.log || ''}` : (r.error || 'Fehler')))
+      .fail((x) => edLog(false, failResult(x).error));
+  }
+
+  $(document).on('click', '.sv-edit', function (e) {
+    e.stopPropagation();
+    openEditor(String($(this).data('name')));
+  });
+  $(document).on('click', '.sv-ed-tab', function (e) { e.preventDefault(); switchTab($(this).data('file')); });
+  $(document).on('click', '#sv-ed-close', closeEditor);
+  $(document).on('click', '#sv-ed-save', () => saveEditor().done(() => SV.load()));
+  $(document).on('click', '#sv-ed-deploy', function () {
+    const name = edName;
+    saveEditor().done((r) => {
+      if (r.ok && r.valid) runAction('deploy', name, $(this));
+      else edLog(false, `Nicht deployt – Datei ist ungültig:\n${r.log || r.error || ''}`);
+    });
+  });
+  $(document).on('click', '#sv-ed-delete', () => deleteStack(edName));
+  // Tab-Taste im Editor = 2 Leerzeichen (YAML)
+  $(document).on('keydown', '.sv-ed-text', function (e) {
+    if (e.key !== 'Tab') return;
+    e.preventDefault();
+    const s = this.selectionStart;
+    this.value = this.value.slice(0, s) + '  ' + this.value.slice(this.selectionEnd);
+    this.selectionStart = this.selectionEnd = s + 2;
+  });
+
+  /* ---------- Aufräumen ---------- */
+  $(document).on('click', '#sv-cleanup', function () {
+    const $b = $(this);
+    confirmBox('Swarm aufräumen?',
+      'Löscht auf allen Nodes gestoppte Swarm-Container und verwaiste Images. Laufende Container bleiben unberührt. Außerdem behält Swarm künftig nur noch den aktuellen Container pro Service.',
+      () => {
+        SV.busy = true;
+        $b.prop('disabled', true).val('räumt auf …');
+        post({ action: 'cleanup' })
+          .done((r) => showResult('Aufräumen', r))
+          .fail((x) => showResult('Aufräumen', failResult(x)))
+          .always(() => {
+            SV.busy = false;
+            $b.prop('disabled', false).val('Aufräumen');
+            SV.load();
+            if (typeof window.loadlist === 'function' && !SV.listPending) window.loadlist();
+          });
+      });
+  });
+
+  /* ---------- Neuer Stack ---------- */
+  function createStack(raw) {
+    const name = String(raw || '').trim().toLowerCase();
+    if (!name) return;
+    post({ action: 'create', name })
+      .done((r) => { if (r.ok) { openEditor(name, r); SV.load(); } else showResult('Neuer Stack', r); })
+      .fail((x) => showResult('Neuer Stack', failResult(x)));
+  }
+
+  $(document).on('click', '#sv-add', () => {
+    if (typeof swal === 'function') {
+      swal({
+        title: 'Neuer Swarm-Stack', text: 'Name (a-z, 0-9, - und _)', type: 'input',
+        showCancelButton: true, closeOnConfirm: true, inputPlaceholder: 'stack_name',
+        confirmButtonText: 'Anlegen', cancelButtonText: 'Abbrechen',
+      }, (v) => { if (v !== false) setTimeout(() => createStack(v), 150); });
+    } else {
+      createStack(prompt('Name des neuen Swarm-Stacks (a-z, 0-9, - und _):'));
+    }
+  });
+
+  Object.assign(SV, { renderMsg, renderNodes, renderStacks, openEditor, serviceAction });
+})(jQuery);
+]]></INLINE>
+</FILE>
+<FILE Name="&plugdir;/scripts/cleanup.php">
+<INLINE><![CDATA[<?php
+/* Swarm View – automatisches Aufräumen (per Cron, siehe Einstellungen) */
+require_once __DIR__ . '/../include/common.php';
+$cfg = sv_cfg();
+$sw = sv_swarm_settings();
+if (!$sw['active'] || !$sw['manager']) exit(0);   // nur auf dem Swarm-Manager
+[$ok, $log] = sv_cleanup($cfg['CLEANUP_IMAGES'] === 'yes', 300);
+$summary = preg_match_all('/Total reclaimed space: (\S+)/', $log, $m) ? implode(', ', $m[1]) : 'nichts';
+exec('logger -t swarm-view ' . escapeshellarg("Aufräumen " . ($ok ? 'ok' : 'fehlgeschlagen') . " – freigegeben: $summary"));
+echo $log, "\n";
+]]></INLINE>
+</FILE>
+<FILE Name="&plugdir;/scripts/monitor.php">
+<INLINE><![CDATA[<?php
+/* Swarm View – Hintergrund-Wächter, per Cron jede Minute (nur wenn in den Einstellungen etwas aktiv ist) */
+require_once __DIR__ . '/../include/monitor.php';
+
+$cfg = sv_cfg();
+if (!sv_monitor_needed($cfg)) exit(0);
+
+// Keine überlappenden Läufe
+@mkdir($GLOBALS['STATE_DIR'], 0755, true);
+$lock = fopen($GLOBALS['STATE_DIR'] . '/monitor.lock', 'c');
+if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) exit(0);
+
+foreach (sv_monitor_run($cfg) as $line) {
+    echo $line, "\n";
+    if (!str_starts_with($line, 'Gemeldet:')) exec('logger -t swarm-view ' . escapeshellarg($line));
+}
+]]></INLINE>
+</FILE>
+<FILE Name="&plugdir;/scripts/postinstall.php">
+<INLINE><![CDATA[<?php
+/* Swarm View – nach Installation/Update: Agent auf die aktuelle Skript-Version bringen (nur wenn eingeschaltet) */
+require_once __DIR__ . '/../include/common.php';
+$cfg = sv_cfg();
+// Lage der Swarm-Leiste (menu.cfg) sicherstellen
+if (!is_file(dirname($GLOBALS['CFG_FILE']) . '/menu.cfg') && is_file($GLOBALS['CFG_FILE'])) sv_menu_write($cfg['SWARM_POSITION']);
+if ($cfg['STATS'] !== 'yes') exit(0);
+$sw = sv_swarm_settings();
+if (!$sw['active'] || !$sw['manager']) exit(0);
+echo sv_agent_apply($cfg), "\n";
+]]></INLINE>
+</FILE>
+
+<FILE Run="/bin/bash">
+<INLINE>
+chmod -R u=rwX,go=rX &plugdir;
+# activate the saved cleanup schedule (cleanup.cron)
+if [ -x /usr/local/sbin/update_cron ]; then /usr/local/sbin/update_cron; fi
+# bring the CPU/RAM agent to the new version (if enabled)
+timeout 60 /usr/bin/php -q &plugdir;/scripts/postinstall.php || true
+echo ""
+echo "Swarm View &version; installed - reload the Docker page."
+</INLINE>
+</FILE>
+
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+rm -rf &plugdir;
+rm -f /boot/config/plugins/&name;/cleanup.cron
+# remove helper services from the swarm (agent on all nodes, cleanup job)
+if [ -x /usr/bin/docker ]; then /usr/bin/docker service rm swarm-view-agent swarm-view-cleanup >/dev/null 2>&amp;1; fi
+rm -rf /tmp/swarm-view
+if [ -x /usr/local/sbin/update_cron ]; then /usr/local/sbin/update_cron; fi
+echo "Swarm View removed (stack files and settings stay in /boot/config/plugins/&name;/)."
+</INLINE>
+</FILE>
+
+</PLUGIN>

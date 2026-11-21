@@ -1,0 +1,8 @@
+# Changelog
+### 2026.11.21
+- First public release
+- Swarm Stacks section on the Docker page: create, edit and deploy stacks (Stack Up / Update Stack / Stack Down), per-service actions (update, rollback, restart, logs, move)
+- Host column and rows for containers running on other nodes, with CPU/RAM, network, uptime and context menu; Folder View support (folder totals across nodes, regex on display names)
+- Node placement per service at runtime: automatic, preferred (with failover and automatic return) or fixed
+- Notifications (node offline, crash loops, pending tasks, node changes, image updates), update hints with rollback, cleanup of stopped task containers and old images
+- Settings with tabs: general, nodes (with warnings), watchdog, maintenance, status

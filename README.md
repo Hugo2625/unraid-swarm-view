@@ -1,0 +1,58 @@
+# Swarm View for Unraid
+
+Docker Swarm on the Unraid Docker page. Swarm View is built for a setup where **Unraid is the swarm manager** and small machines (for example a Raspberry Pi) join as workers.
+
+![Swarm Stacks section](docs/swarm-stacks.png)
+
+> **Language:** the user interface is currently German. An English interface is in progress.
+
+## Features
+
+- **Swarm Stacks section** on the Docker page, similar to Compose Manager: create stacks, edit `docker-stack.yml` and `.env`, *Stack Up*, *Update Stack*, *Stack Down*, restart. Per service: update, rollback, restart, logs, move to another node.
+- **Where does it run?** A host column in Unraid's container list, and rows for containers that run on other nodes – with CPU/RAM, network, IP, ports, uptime, logs and a context menu, like local containers.
+- **Node placement at runtime:** *automatic*, *preferred node* (runs there when the node is available, fails over to another node and returns automatically) or *fixed node*. Runtime placement lasts until the next *Stack Up*; for a permanent preference set the label `swarm-view.prefer: <node>` in the stack file.
+- **Display names:** Swarm ignores `container_name`. Set the label `swarm-view.name: <name>` and Unraid's list shows that name.
+- **Folder View:** containers on other nodes are sorted into folders; folder CPU/RAM totals can include all nodes; folder regexes match real and display names.
+- **Notifications** through Unraid: node offline, crash loops, tasks that cannot start, node changes, image updates – each configurable.
+- **Update hints** with one-click update and rollback.
+- **Cleanup** of stopped task containers and unused images on all nodes, on demand or scheduled.
+- **Settings** with tabs: general, nodes (with warnings such as missing memory cgroup or Docker version mismatch), watchdog, maintenance, status.
+
+![Node settings](docs/settings-nodes.png)
+
+## Requirements
+
+- Unraid 7.0 or newer
+- Docker Swarm initialised with Unraid as manager (`docker swarm init`), workers joined
+- Bind-mounted paths (for example `/mnt/user/appdata`) must exist on every node a service may run on – e.g. via NFS
+
+## Installation
+
+Until the plugin is listed in Community Applications: *Plugins → Install Plugin* and paste
+
+```
+https://raw.githubusercontent.com/Hugo2652/unraid-swarm-view/main/swarm-view.plg
+```
+
+## How it works
+
+- Stack files live on the flash drive in `/boot/config/plugins/swarm-view/stacks/<name>/` and are deployed with `docker stack deploy`.
+- CPU/RAM of other nodes come from a small global agent service (`swarm-view-agent`, image `docker:cli`), enabled in the settings. On nodes without memory cgroup (Raspberry Pi OS default) memory is estimated from the processes' RSS.
+- A watchdog (cron, every minute) handles notifications, update checks and the return to a preferred node. It only runs when one of these features is enabled.
+- Uninstalling removes the plugin and its helper services; stack files and settings stay on the flash drive.
+
+## Building
+
+```
+python3 tools/build_plg.py 2026.11.21
+```
+
+builds `swarm-view.plg` from `src/swarm-view/`, with the matching section of `CHANGES.md` as changelog.
+
+## Support
+
+Issues and ideas: [GitHub issues](https://github.com/Hugo2652/unraid-swarm-view/issues).
+
+## License
+
+MIT – see [LICENSE](LICENSE).
