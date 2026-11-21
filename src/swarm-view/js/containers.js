@@ -388,6 +388,16 @@
   }
 
   /** Local Swarm containers in Unraid's list: update status, start/stop hint, display name */
+  /* Unraid renders the name of containers without template as plain text. Folder View 2 finds rows only via
+   * ".appname a" and therefore never sorts Swarm containers into folders – give their name the same <a> as template
+   * containers (text stays identical, so Unraid, Folder View 3 and the autostart order are unaffected). */
+  const SWARM_TASK_NAME = /^\S+\.[a-z0-9]+\.[a-z0-9]{25}$/;
+  function linkLocalSwarmName($tr) {
+    const $an = $tr.children('td.ct-name').find('.appname').first();
+    if (!$an.length || $an.children('a').length) return;
+    const name = $an.text().trim();
+    if (SWARM_TASK_NAME.test(name)) $an.empty().append($('<a class="sv-name sv-local-name"></a>').text(name));
+  }
   function localSwarmRow($tr) {
     const name = $tr.find('.appname').first().text().trim();
     const c = SV.data && (SV.data.containers || {})[name];
@@ -407,7 +417,9 @@
   const normImg = (s) => String(s || '').trim().replace(/@sha256:[0-9a-f]+$/i, '').replace(/^docker\.io\//, '').replace(/^library\//, '')
     .replace(/^([^/:]+)$/, '$1:latest').replace(/^([^:]*\/[^/:]+)$/, '$1:latest');
   function hideOrphans($tbl) {
-    const mode = cfg().orphans || 'swarm';
+    // without Swarm data (API error, Swarm off, worker node) behave like Unraid and hide nothing
+    const swarmReady = !!(SV.data && SV.data.swarm && SV.data.swarm.active && SV.data.swarm.manager);
+    const mode = swarmReady ? (cfg().orphans || 'swarm') : 'show';
     const $rows = $('#docker_list > tr').filter(function () { return $(this).find('span[onclick^="addDockerImageContext"]').length > 0; });
     $('#docker_list > tr.sv-orphan-sum').remove();
     $rows.removeClass('sv-orphan-hidden');
@@ -417,7 +429,8 @@
     let reserve = 0, old = 0, other = 0;
     const hide = $rows.filter(function () {
       const m = String($(this).find('span[onclick^="addDockerImageContext"]').attr('onclick')).match(/addDockerImageContext\('[^']*','([^']*)'\)/);
-      const tags = (m ? m[1] : '').split(',').map((x) => x.trim()).filter(Boolean);
+      // "<none>:<none>" (older Docker versions) counts as an image without name, like an empty tag list
+      const tags = (m ? m[1] : '').split(',').map((x) => x.trim()).filter((x) => x && !/^<none>(:<none>)?$/.test(x));
       if (!tags.length) { old++; return true; }
       if (tags.some((x) => swarmImgs.has(normImg(x)))) { reserve++; return true; }
       if (mode === 'hide') { other++; return true; }
@@ -452,8 +465,10 @@
     hookFolderView();
 
     const withHost = cfg().hostColumn;
+    let headerChanged = false;
     if (!withHost) {
       // remove the column (if it was active before)
+      if ($tbl.find('thead th.sv-hostcol').length) headerChanged = true;
       $tbl.find('thead th.sv-hostcol').remove();
       $('#docker_list > tr:not(.sv-remote-row)').children('td.sv-hostcol').remove();
     }
@@ -462,6 +477,12 @@
       const $load = $tbl.find('thead th.load');
       const $th = $('<th class="sv-adv sv-hostcol">Host</th>');
       if ($load.length) $load.after($th); else $tbl.find('thead th').eq(7).after($th);
+      headerChanged = true;
+    }
+    // Folder View 3 fixes the column widths from its own measurement and caches them per view –
+    // a column added later would keep a width of ~0. Let it measure again.
+    if (headerChanged && typeof window.fv3ResetWidthSnapshots === 'function' && typeof window.fv3ScheduleWidthFix === 'function') {
+      try { window.fv3ResetWidthSnapshots(); window.fv3ScheduleWidthFix(); } catch (e) { /* Folder View internals changed */ }
     }
 
     $('#docker_list > tr').each(function () {
@@ -469,10 +490,11 @@
       if ($tr.hasClass('sv-remote-row')) return;                              // our own rows
       if ($tr.hasClass('folder')) { if (withHost) fixFolderRow(this, $tbl); return; } // Folder View folder
       if ($tr.hasClass('sortable') && /^swarm-view-(agent|cleanup)\./.test($tr.find('.appname').first().text().trim())) {
-        $tr.hide().next('tr.advanced').hide();
+        $tr.addClass('sv-internal-row');
         return;
       }
       if ($tr.hasClass('sortable')) {
+        linkLocalSwarmName($tr);
         localSwarmRow($tr);
         if (!withHost) return;
         let $td = $tr.children('td.sv-hostcol');

@@ -1,4 +1,10 @@
 # Changelog
+### 2026.11.21c
+- Folder View 3: the host column no longer shrinks to a sliver after switching Basic → Advanced view
+- Folder View 2: Swarm containers running on Unraid are now sorted into folders as well
+- Orphan images: an image was hidden by mistake when the agent container was the last container in the list (and reappeared in the basic view); "<none>:<none>" counts as an image without name; without Swarm data nothing is hidden
+- Swarm section scrolls horizontally on narrow screens instead of being cut off
+- Host column keeps a minimum width
 ### 2026.11.21b
 - Support link to the Unraid forum thread
 - GitHub account renamed to Hugo2625: new plugin URL https://raw.githubusercontent.com/Hugo2625/unraid-swarm-view/main/swarm-view.plg

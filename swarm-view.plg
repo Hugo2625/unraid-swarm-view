@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "swarm-view">
 <!ENTITY author    "Hugo2625">
-<!ENTITY version   "2026.11.21b">
+<!ENTITY version   "2026.11.21c">
 <!ENTITY github    "Hugo2625/unraid-swarm-view">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/&github;/main/&name;.plg">
 <!ENTITY support   "https://forums.unraid.net/topic/201367-plugin-support-swarm-view-docker-swarm-stacks-on-the-docker-page/">
@@ -11,6 +11,12 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" support="&support;" min="7.0.0" icon="cubes">
 
 <CHANGES>
+###2026.11.21c
+- Folder View 3: the host column no longer shrinks to a sliver after switching Basic → Advanced view
+- Folder View 2: Swarm containers running on Unraid are now sorted into folders as well
+- Orphan images: an image was hidden by mistake when the agent container was the last container in the list (and reappeared in the basic view); "&lt;none>:&lt;none>" counts as an image without name; without Swarm data nothing is hidden
+- Swarm section scrolls horizontally on narrow screens instead of being cut off
+- Host column keeps a minimum width
 ###2026.11.21b
 - Support link to the Unraid forum thread
 - GitHub account renamed to Hugo2625: new plugin URL https://raw.githubusercontent.com/Hugo2625/unraid-swarm-view/main/swarm-view.plg
@@ -73,6 +79,7 @@ $sv_base = '/plugins/swarm-view';
     </div>
   </div>
 
+  <div class="sv-tablewrap">
   <table class="tablesorter shift" id="sv-stacks">
     <thead><tr>
       <th style="text-align:left">Stack</th>
@@ -83,6 +90,7 @@ $sv_base = '/plugins/swarm-view';
     </tr></thead>
     <tbody><tr class="sv-empty"><td colspan="5"><?=sv_e('Loading …')?></td></tr></tbody>
   </table>
+  </div>
   <div class="sv-bottom">
     <input type="button" id="sv-add" value="Add New Swarm Stack">
     <input type="button" id="sv-cleanup" value="<?=sv_e('Cleanup')?>" title="<?=sv_e('Remove stopped Swarm containers and unused images on all nodes')?>">
@@ -727,6 +735,7 @@ body:not(.sv-advanced) .sv-adv { display: none !important; }
 
 /* ---------- Unraid-Container-Tabelle ---------- */
 #docker_containers td.sv-hostcol { white-space: nowrap; }
+#docker_containers th.sv-hostcol { min-width: 120px; padding-right: 12px; }   /* keeps its width when remote rows sit in closed folders */
 /* name like local containers without a template: normal text colour; a click opens the menu */
 #docker_list tr.sv-remote-row .appname a.sv-name { color: inherit; cursor: pointer; text-decoration: none; }
 #docker_list tr.sv-remote-row .appname a.sv-name:hover { text-decoration: underline; }
@@ -828,6 +837,9 @@ body:not(.sv-advanced) .sv-adv { display: none !important; }
 
 /* hide orphan images (Unraid sets display inline when the view changes – hence !important) */
 #docker_list tr.sv-orphan-hidden { display: none !important; }
+#docker_list tr.sv-internal-row { display: none !important; }   /* agent/cleanup helper containers */
+#docker_list .appname a.sv-local-name { color: inherit; cursor: inherit; text-decoration: none; }
+#sv-root .sv-tablewrap { overflow-x: auto; }   /* narrow screens: scroll the table instead of cutting it off */
 #docker_list tr.sv-orphan-sum td { padding: 6px 10px; }
 #docker_list tr.sv-orphan-sum a { color: inherit; text-decoration: none; }
 #docker_list tr.sv-orphan-sum a:hover { text-decoration: underline; }
@@ -2610,11 +2622,12 @@ function sv_updates_cached(): array {
   function start() {
     // fetch data as early as possible so remote containers are there on the first list load
     SV.load();
+    // follow Unraid's "Basic/Advanced View" switch – bound right away (not on ready) so our columns are
+    // shown/hidden before Folder View 3 measures the table in its own (later bound) change handler
+    $(document).on('change', 'input.advancedview', applyViewMode);
 
     $(function () {
       applyViewMode();
-      // follow Unraid's "Basic/Advanced View" switch
-      $(document).on('change', 'input.advancedview', applyViewMode);
       SV.decorateDockerTable();
       scheduleRefresh();
     });
@@ -3019,6 +3032,16 @@ function sv_updates_cached(): array {
   }
 
   /** Local Swarm containers in Unraid's list: update status, start/stop hint, display name */
+  /* Unraid renders the name of containers without template as plain text. Folder View 2 finds rows only via
+   * ".appname a" and therefore never sorts Swarm containers into folders – give their name the same <a> as template
+   * containers (text stays identical, so Unraid, Folder View 3 and the autostart order are unaffected). */
+  const SWARM_TASK_NAME = /^\S+\.[a-z0-9]+\.[a-z0-9]{25}$/;
+  function linkLocalSwarmName($tr) {
+    const $an = $tr.children('td.ct-name').find('.appname').first();
+    if (!$an.length || $an.children('a').length) return;
+    const name = $an.text().trim();
+    if (SWARM_TASK_NAME.test(name)) $an.empty().append($('<a class="sv-name sv-local-name"></a>').text(name));
+  }
   function localSwarmRow($tr) {
     const name = $tr.find('.appname').first().text().trim();
     const c = SV.data && (SV.data.containers || {})[name];
@@ -3038,7 +3061,9 @@ function sv_updates_cached(): array {
   const normImg = (s) => String(s || '').trim().replace(/@sha256:[0-9a-f]+$/i, '').replace(/^docker\.io\//, '').replace(/^library\//, '')
     .replace(/^([^/:]+)$/, '$1:latest').replace(/^([^:]*\/[^/:]+)$/, '$1:latest');
   function hideOrphans($tbl) {
-    const mode = cfg().orphans || 'swarm';
+    // without Swarm data (API error, Swarm off, worker node) behave like Unraid and hide nothing
+    const swarmReady = !!(SV.data && SV.data.swarm && SV.data.swarm.active && SV.data.swarm.manager);
+    const mode = swarmReady ? (cfg().orphans || 'swarm') : 'show';
     const $rows = $('#docker_list > tr').filter(function () { return $(this).find('span[onclick^="addDockerImageContext"]').length > 0; });
     $('#docker_list > tr.sv-orphan-sum').remove();
     $rows.removeClass('sv-orphan-hidden');
@@ -3048,7 +3073,8 @@ function sv_updates_cached(): array {
     let reserve = 0, old = 0, other = 0;
     const hide = $rows.filter(function () {
       const m = String($(this).find('span[onclick^="addDockerImageContext"]').attr('onclick')).match(/addDockerImageContext\('[^']*','([^']*)'\)/);
-      const tags = (m ? m[1] : '').split(',').map((x) => x.trim()).filter(Boolean);
+      // "<none>:<none>" (older Docker versions) counts as an image without name, like an empty tag list
+      const tags = (m ? m[1] : '').split(',').map((x) => x.trim()).filter((x) => x && !/^<none>(:<none>)?$/.test(x));
       if (!tags.length) { old++; return true; }
       if (tags.some((x) => swarmImgs.has(normImg(x)))) { reserve++; return true; }
       if (mode === 'hide') { other++; return true; }
@@ -3083,8 +3109,10 @@ function sv_updates_cached(): array {
     hookFolderView();
 
     const withHost = cfg().hostColumn;
+    let headerChanged = false;
     if (!withHost) {
       // remove the column (if it was active before)
+      if ($tbl.find('thead th.sv-hostcol').length) headerChanged = true;
       $tbl.find('thead th.sv-hostcol').remove();
       $('#docker_list > tr:not(.sv-remote-row)').children('td.sv-hostcol').remove();
     }
@@ -3093,6 +3121,12 @@ function sv_updates_cached(): array {
       const $load = $tbl.find('thead th.load');
       const $th = $('<th class="sv-adv sv-hostcol">Host</th>');
       if ($load.length) $load.after($th); else $tbl.find('thead th').eq(7).after($th);
+      headerChanged = true;
+    }
+    // Folder View 3 fixes the column widths from its own measurement and caches them per view –
+    // a column added later would keep a width of ~0. Let it measure again.
+    if (headerChanged && typeof window.fv3ResetWidthSnapshots === 'function' && typeof window.fv3ScheduleWidthFix === 'function') {
+      try { window.fv3ResetWidthSnapshots(); window.fv3ScheduleWidthFix(); } catch (e) { /* Folder View internals changed */ }
     }
 
     $('#docker_list > tr').each(function () {
@@ -3100,10 +3134,11 @@ function sv_updates_cached(): array {
       if ($tr.hasClass('sv-remote-row')) return;                              // our own rows
       if ($tr.hasClass('folder')) { if (withHost) fixFolderRow(this, $tbl); return; } // Folder View folder
       if ($tr.hasClass('sortable') && /^swarm-view-(agent|cleanup)\./.test($tr.find('.appname').first().text().trim())) {
-        $tr.hide().next('tr.advanced').hide();
+        $tr.addClass('sv-internal-row');
         return;
       }
       if ($tr.hasClass('sortable')) {
+        linkLocalSwarmName($tr);
         localSwarmRow($tr);
         if (!withHost) return;
         let $td = $tr.children('td.sv-hostcol');

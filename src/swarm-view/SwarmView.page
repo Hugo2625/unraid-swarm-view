@@ -36,6 +36,7 @@ $sv_base = '/plugins/swarm-view';
     </div>
   </div>
 
+  <div class="sv-tablewrap">
   <table class="tablesorter shift" id="sv-stacks">
     <thead><tr>
       <th style="text-align:left">Stack</th>
@@ -46,6 +47,7 @@ $sv_base = '/plugins/swarm-view';
     </tr></thead>
     <tbody><tr class="sv-empty"><td colspan="5"><?=sv_e('Loading …')?></td></tr></tbody>
   </table>
+  </div>
   <div class="sv-bottom">
     <input type="button" id="sv-add" value="Add New Swarm Stack">
     <input type="button" id="sv-cleanup" value="<?=sv_e('Cleanup')?>" title="<?=sv_e('Remove stopped Swarm containers and unused images on all nodes')?>">

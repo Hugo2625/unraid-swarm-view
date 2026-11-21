@@ -282,11 +282,12 @@
   function start() {
     // fetch data as early as possible so remote containers are there on the first list load
     SV.load();
+    // follow Unraid's "Basic/Advanced View" switch – bound right away (not on ready) so our columns are
+    // shown/hidden before Folder View 3 measures the table in its own (later bound) change handler
+    $(document).on('change', 'input.advancedview', applyViewMode);
 
     $(function () {
       applyViewMode();
-      // follow Unraid's "Basic/Advanced View" switch
-      $(document).on('change', 'input.advancedview', applyViewMode);
       SV.decorateDockerTable();
       scheduleRefresh();
     });
