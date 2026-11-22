@@ -102,4 +102,12 @@ code {{ color: #9fd3ff; }}
 </body></html>'''
 open(os.path.join(site, 'index.html'), 'w').write(page)
 open(os.path.join(site, '.nojekyll'), 'w').write('')
-print(f'site: {site}/index.html – {len(variants)} variant(s), {sum(len(v["imgs"]) for v in variants)} images')
+
+# README badge (shields.io endpoint): which Unraid version the last run tested and whether everything passed
+all_ok = bool(variants) and all(c['ok'] for v in variants for r in v['results'].values() for c in r['checks'])
+unraid = vers.get('unraid') or ''
+badge = {'schemaVersion': 1, 'label': 'tested on Unraid', 'namedLogo': 'unraid',
+         'message': (unraid or 'unknown') + ('' if all_ok else ' failing'),
+         'color': ('brightgreen' if unraid else 'green') if all_ok else 'red'}
+json.dump(badge, open(os.path.join(site, 'badge.json'), 'w'))
+print(f'site: {site}/index.html – {len(variants)} variant(s), {sum(len(v["imgs"]) for v in variants)} images; badge: {badge["message"]}')

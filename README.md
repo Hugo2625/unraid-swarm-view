@@ -1,6 +1,6 @@
 # Swarm View for Unraid
 
-[![CI](https://github.com/Hugo2625/unraid-swarm-view/actions/workflows/ci.yml/badge.svg)](https://github.com/Hugo2625/unraid-swarm-view/actions/workflows/ci.yml) [![UI tests](https://github.com/Hugo2625/unraid-swarm-view/actions/workflows/ui-tests.yml/badge.svg)](https://github.com/Hugo2625/unraid-swarm-view/actions/workflows/ui-tests.yml)
+[![CI](https://github.com/Hugo2625/unraid-swarm-view/actions/workflows/ci.yml/badge.svg)](https://github.com/Hugo2625/unraid-swarm-view/actions/workflows/ci.yml) [![UI tests](https://github.com/Hugo2625/unraid-swarm-view/actions/workflows/ui-tests.yml/badge.svg)](https://github.com/Hugo2625/unraid-swarm-view/actions/workflows/ui-tests.yml) [![Tested on Unraid](https://img.shields.io/endpoint?url=https%3A%2F%2Fhugo2625.github.io%2Funraid-swarm-view%2Fbadge.json)](https://hugo2625.github.io/unraid-swarm-view/)
 
 Docker Swarm on the Unraid Docker page. Swarm View is built for a setup where **Unraid is the swarm manager** and small machines (for example a Raspberry Pi) join as workers.
 
@@ -68,7 +68,7 @@ Bugs and ideas: [GitHub issues](https://github.com/Hugo2625/unraid-swarm-view/is
 Every push and pull request runs automatic checks ([GitHub Actions](../../actions)):
 
 - **CI** – PHP/JS syntax, translations complete, `swarm-view.plg` built from the current `src/`, version raised when `src/` changed, backend tests of `api.php`/`actions.php` against a fake Docker CLI (`python3 tools/ci_checks.py`, `python3 tests/bench/backend/test_backend.py`)
-- **UI tests** – the original Unraid Docker page with Folder View 3/2, Compose Manager and Swarm View in headless Chrome, 44 scenarios (plugins on/off, section position, views, themes, languages, narrow screens, API errors, slow API, nodes down, settings). Pull requests: quick set; nightly: everything with 1, 2 and 6 worker nodes against the latest stable Unraid release and the current Folder View / Compose Manager. A new Unraid release is detected within 3 hours and tested automatically. Results with screenshots of the latest nightly/manual run: **[hugo2625.github.io/unraid-swarm-view](https://hugo2625.github.io/unraid-swarm-view/)** (also attached to each run). Details: [tests/bench](tests/bench)
+- **UI tests** – the original Unraid Docker page with Folder View 3/2, Compose Manager and Swarm View in headless Chrome, 44 scenarios (plugins on/off, section position, views, themes, languages, narrow screens, API errors, slow API, nodes down, settings). Pull requests: quick set; nightly: everything with 1, 2 and 6 worker nodes against the latest stable Unraid release and the current Folder View / Compose Manager. A new Unraid release is detected within 3 hours and tested automatically; the *tested on Unraid* badge above shows the version of the last published run and turns red if it failed. Results with screenshots of the latest nightly/manual run: **[hugo2625.github.io/unraid-swarm-view](https://hugo2625.github.io/unraid-swarm-view/)** (also attached to each run). Details: [tests/bench](tests/bench)
 - **New Unraid release** – every 3 hours: new stable Unraid version (release notes in `unraid/docs`)? → full UI tests against the webgui code of that release line, results page updated
 - **Release** – a new version in `swarm-view.plg` on `main` creates a GitHub release with the changelog
 
