@@ -103,18 +103,13 @@ jobs:
 
   # Nightly / manual / new-release runs on main: publish report + screenshots of all variants (GitHub Pages)
   pages:
-    name: Publish results page
+    name: Build results page
     needs: ui
     if: always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       actions: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
       - name: Collect the results of all variants
@@ -123,10 +118,28 @@ jobs:
         run: |
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'ui-report-*' --dir results
           python3 tests/bench/make_site.py site $(find results -name results.json -exec dirname {} \; | sort)
-      - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site
+
+  # separate job (GitHub's pattern): the pages artifact of the job above is complete and listed before deploy-pages
+  # looks for it – in the same job it was sometimes not found yet ("No artifacts named github-pages")
+  deploy:
+    name: Publish results page
+    needs: pages
+    if: always() && needs.pages.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v6
       - name: Deploy
         id: deploy
         uses: actions/deploy-pages@v5
