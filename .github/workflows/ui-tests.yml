@@ -110,14 +110,18 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pages: read
     steps:
       - uses: actions/checkout@v6
-      - name: Collect the results of all variants
+      - name: Collect the results of all variants, add them to the history of the published page
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'ui-report-*' --dir results
-          python3 tests/bench/make_site.py site $(find results -name results.json -exec dirname {} \; | sort)
+          # the published page is the archive: history.json + page and screenshots of the latest run per Unraid version
+          url=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .html_url 2>/dev/null || true)
+          [ -n "$url" ] || url="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}/"
+          python3 tests/bench/make_site.py site $(find results -name results.json -exec dirname {} \; | sort) --prev "$url"
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site
