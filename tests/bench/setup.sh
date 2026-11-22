@@ -3,6 +3,10 @@
 # Builds a fake Unraid web root (/usr/local/emhttp) and /boot/config from the vendor sources,
 # so the original Unraid, FolderView and Compose Manager pages run unchanged.
 # Run as root in a throwaway container/VM – it writes to /usr/local/emhttp and /boot/config.
+#
+# Unraid code: by default the webgui of the latest stable Unraid release line (unraid_version.py), e.g. Unraid 7.4.1
+# → branch "master", 7.3.x → branch "7.3". Override: UNRAID_VERSION=7.3.6 and/or WEBGUI_REF=<branch or commit>.
+# Folder View 3/2 and Compose Manager: their current default branch.
 set -e
 BENCH="$(cd "$(dirname "$0")" && pwd)"
 # Swarm View checkout: the repository this bench lives in (tests/bench), or SV_REPO
@@ -26,7 +30,32 @@ clone https://github.com/unraid/webgui.git webgui \
 clone https://github.com/chodeus/folder.view3.git folder.view3
 clone https://github.com/VladoPortos/folder.view2.git folder.view2
 clone https://github.com/dcflachs/compose_plugin.git compose_plugin
-[ "${1:-}" = "--update" ] && for d in "$V"/*/; do git -C "$d" pull -q || true; done
+[ "${1:-}" = "--update" ] && for d in "$V"/folder.view3 "$V"/folder.view2 "$V"/compose_plugin; do git -C "$d" pull -q || true; done
+
+# --- Unraid release → webgui code of that release line ---
+if [ -z "$WEBGUI_REF" ]; then
+  info=$(python3 "$BENCH/unraid_version.py" ${UNRAID_VERSION:+--version "$UNRAID_VERSION"} 2>/dev/null || true)
+  UNRAID_VERSION=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])' 2>/dev/null || true)
+  WEBGUI_REF=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["webgui_ref"])' 2>/dev/null || echo master)
+fi
+WEBGUI_REF=${WEBGUI_REF:-master}
+git -C "$V/webgui" fetch -q --depth 1 origin "$WEBGUI_REF"
+git -C "$V/webgui" checkout -q FETCH_HEAD
+
+# what is tested – shown in the report and on the results page
+python3 - "$V" "${UNRAID_VERSION:-}" "$WEBGUI_REF" <<'PY'
+import json, subprocess, sys
+v, unraid, ref = sys.argv[1:4]
+def head(d):
+    return subprocess.run(['git', '-C', f'{v}/{d}', 'log', '-1', '--format=%h|%cs'], capture_output=True, text=True).stdout.strip().split('|') + ['', '']
+info = {'unraid': unraid, 'webgui': {'ref': ref, 'commit': head('webgui')[0], 'date': head('webgui')[1]}}
+for name, d in (('folderview3', 'folder.view3'), ('folderview2', 'folder.view2'), ('compose', 'compose_plugin')):
+    c, date = head(d)[:2]
+    info[name] = {'commit': c, 'date': date}
+json.dump(info, open(f'{v}/versions.json', 'w'), indent=1)
+print('testing against: Unraid ' + (unraid or '?') + f" (webgui {ref} @ {info['webgui']['commit']}), "
+      + ', '.join(f"{k} @ {info[k]['commit']}" for k in ('folderview3', 'folderview2', 'compose')))
+PY
 
 # --- fake web root ---
 E=/usr/local/emhttp

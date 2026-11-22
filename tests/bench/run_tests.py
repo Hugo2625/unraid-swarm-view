@@ -142,15 +142,24 @@ async def main():
 
 results, secs = asyncio.run(main())
 json.dump(results, open(os.path.join(OUT, 'results.json'), 'w'), indent=1)
+# which Unraid / plugin versions were tested (written by setup.sh)
+try:
+    versions = json.load(open(os.path.join(HERE, 'vendor', 'versions.json')))
+except Exception:
+    versions = {}
+json.dump({'workers': args.workers, 'seconds': secs, 'versions': versions}, open(os.path.join(OUT, 'meta.json'), 'w'), indent=1)
+tested = (f"Unraid {versions.get('unraid') or '?'} (webgui {versions['webgui']['ref']} @ {versions['webgui']['commit']}), "
+          f"Folder View 3 @ {versions['folderview3']['commit']}, Folder View 2 @ {versions['folderview2']['commit']}, "
+          f"Compose Manager @ {versions['compose']['commit']}") if versions.get('webgui') else 'versions unknown'
 total = sum(len(r['checks']) for r in results.values())
 failed = sum(1 for r in results.values() for c in r['checks'] if not c['ok'])
 with open(os.path.join(OUT, 'report.md'), 'w') as f:
-    f.write(f'# Swarm View test bench – {args.workers} worker(s)\n\n{len(results)} scenarios, {total} checks, {failed} failed ({secs} s)\n\n')
+    f.write(f'# Swarm View test bench – {args.workers} worker(s)\n\n{len(results)} scenarios, {total} checks, {failed} failed ({secs} s)\n\nTested against: {tested}\n\n')
     for n, r in results.items():
         bad = [c for c in r['checks'] if not c['ok']]
         f.write(f"## {'✅' if not bad else '❌'} {n}  ({r['seconds']} s)\n\n")
         for c in r['checks']:
             f.write(f"- {'✅' if c['ok'] else '❌'} `{c['id']}` {c['info'][:300]}\n")
         f.write('\n')
-print(f'\n{len(results)} scenarios, {total} checks, {failed} failed in {secs} s – report: {OUT}/report.md')
+print(f'\n{len(results)} scenarios, {total} checks, {failed} failed in {secs} s – {tested}\nreport: {OUT}/report.md')
 sys.exit(1 if failed else 0)

@@ -1,26 +1,45 @@
 name: UI tests
 
 # Runs the original Unraid Docker page with Folder View 3/2, Compose Manager and Swarm View in headless Chrome
-# (tests/bench). Pull requests: quick set with 1 worker. Nightly and on demand: all scenarios with 1, 2 and 6 workers,
-# always against the current versions of Unraid's webgui, Folder View and Compose Manager.
+# (tests/bench). Pull requests: quick set with 1 worker. Nightly and on demand: all scenarios with 1, 2 and 6 workers.
+# Unraid code: the latest stable release line (tests/bench/unraid_version.py) unless a version/branch is given;
+# Folder View and Compose Manager: their current state. New Unraid releases trigger this via unraid-release.yml.
 on:
   pull_request:
   schedule:
     - cron: '17 2 * * *'
   workflow_dispatch:
+    inputs:
+      unraid_version:
+        description: 'Unraid version (e.g. 7.3.6) – empty = latest stable release'
+        required: false
+        default: ''
+      webgui_ref:
+        description: 'or a webgui branch/commit (e.g. master, 7.3) – overrides the version'
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      unraid_version:
+        type: string
+        required: false
+        default: ''
+      webgui_ref:
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
-
-concurrency:
-  group: ui-tests-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   ui:
     name: UI (${{ matrix.workers }} worker)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    concurrency:
+      group: ui-${{ github.ref }}-${{ inputs.unraid_version || inputs.webgui_ref || 'latest' }}-${{ matrix.workers }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,7 +66,10 @@ jobs:
             python -m playwright install --with-deps chromium
           fi
       - name: Build the fake Unraid (web root, plugins, flash config)
-        run: sudo tests/bench/setup.sh
+        env:
+          UNRAID_VERSION: ${{ inputs.unraid_version }}
+          WEBGUI_REF: ${{ inputs.webgui_ref }}
+        run: sudo --preserve-env=UNRAID_VERSION,WEBGUI_REF tests/bench/setup.sh
       - name: Start the bench server
         run: |
           sudo nohup tests/bench/server.sh > /tmp/bench-server.log 2>&1 &
@@ -59,7 +81,7 @@ jobs:
         if: always()
         run: |
           r=$(ls -d tests/bench/out*/report.md 2>/dev/null | head -1)
-          [ -n "$r" ] && { sed -n '1,3p' "$r"; grep -E '^## ❌' "$r" || true; } >> "$GITHUB_STEP_SUMMARY"
+          [ -n "$r" ] && { sed -n '1,5p' "$r"; grep -E '^## ❌' "$r" || true; } >> "$GITHUB_STEP_SUMMARY"
           g=$(ls -d tests/bench/out*/gallery 2>/dev/null | head -1)
           [ -n "$g" ] && { echo; echo "**Screenshots** (artifact *screenshots-${{ matrix.workers }}-worker*): $(ls "$g" | sed 's/\.png$//' | paste -sd ',' | sed 's/,/, /g')"; } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload screenshots
@@ -79,7 +101,7 @@ jobs:
             /tmp/bench-server.log
           retention-days: 14
 
-  # Nightly / manual runs on main: publish report + screenshots of all variants as a web page (GitHub Pages)
+  # Nightly / manual / new-release runs on main: publish report + screenshots of all variants (GitHub Pages)
   pages:
     name: Publish results page
     needs: ui

@@ -11,7 +11,7 @@ Each run also saves a few curated screenshots in `<out>/gallery` (Docker page, c
 
 | Part | Source |
 |---|---|
-| Unraid page system (PageBuilder: order, titles), Docker page, `dynamix.js`, CSS, themes | real (`unraid/webgui`) |
+| Unraid page system (PageBuilder: order, titles), Docker page, `dynamix.js`, CSS, themes | real (`unraid/webgui`) – by default the latest stable release line: `unraid_version.py` reads the newest release notes in `unraid/docs` and picks the webgui branch of that line (`7.3`, …) or `master` |
 | Folder View 3 / Folder View 2 pages and scripts | real (`chodeus/folder.view3`, `VladoPortos/folder.view2`) |
 | Compose Manager section | real (`dcflachs/compose_plugin`), rendered with PHP |
 | Swarm View page, JS, CSS | real – symlinked to your checkout (`../unraid-swarm-view`) |
@@ -22,6 +22,7 @@ Each run also saves a few curated screenshots in `<out>/gallery` (Docker page, c
 
 ```bash
 sudo tests/bench/setup.sh            # clones the vendor sources, builds /usr/local/emhttp + /boot/config
+sudo UNRAID_VERSION=7.3.6 tests/bench/setup.sh   # webgui of another Unraid release line (or WEBGUI_REF=<branch|commit>)
 sudo tests/bench/setup.sh --update   # same + git pull of all vendor sources
 pip install -r tests/bench/requirements.txt && playwright install chromium   # or an installed Chrome via --chrome
 ```

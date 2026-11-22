@@ -32,7 +32,8 @@ for d in outs:
             target = f'w{workers}-{kind}-{f}'
             shutil.copy(os.path.join(folder, f), os.path.join(site, 'img', target))
             imgs.append((kind, f[:-4], target))
-    variants.append({'workers': workers, 'results': results, 'head': head, 'imgs': imgs})
+    meta = json.load(open(os.path.join(d, 'meta.json'))) if os.path.isfile(os.path.join(d, 'meta.json')) else {}
+    variants.append({'workers': workers, 'results': results, 'head': head, 'imgs': imgs, 'versions': meta.get('versions') or {}})
 variants.sort(key=lambda v: v['workers'])
 
 run_url = ''
@@ -40,6 +41,13 @@ if os.environ.get('GITHUB_RUN_ID'):
     run_url = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
 now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
 commit = os.environ.get('GITHUB_SHA', '')[:7]
+vers = next((v['versions'] for v in variants if v['versions'].get('webgui')), {})
+tested = ''
+if vers:
+    tested = (f'<div class="tested">Tested against <b>Unraid {esc(vers.get("unraid") or "?")}</b> '
+              f'(webgui <code>{esc(vers["webgui"]["ref"])}</code> @ <code>{esc(vers["webgui"]["commit"])}</code>, {esc(vers["webgui"].get("date", ""))}) · '
+              f'Folder View 3 @ <code>{esc(vers["folderview3"]["commit"])}</code> · Folder View 2 @ <code>{esc(vers["folderview2"]["commit"])}</code> · '
+              f'Compose Manager @ <code>{esc(vers["compose"]["commit"])}</code></div>')
 
 parts = []
 for v in variants:
@@ -69,7 +77,7 @@ for v in variants:
 
 nav = ' · '.join(f'<a href="#w{v["workers"]}">{v["workers"]} worker{"s" if v["workers"] > 1 else ""}</a>' for v in variants)
 page = f'''<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Swarm View – UI tests</title>
+<title>Swarm View – UI tests{f" – Unraid {esc(vers.get('unraid'))}" if vers.get('unraid') else ''}</title>
 <style>
 :root {{ color-scheme: dark; }}
 body {{ margin: 0; font: 15px/1.45 system-ui, sans-serif; background: #161616; color: #e8e8e8; }}
@@ -78,6 +86,7 @@ h1 {{ margin: 8px 0 4px; font-size: 1.5em; }} h2 {{ border-bottom: 1px solid #33
 h2 small {{ color: #9a9a9a; font-weight: normal; font-size: .65em; margin-left: 8px; }}
 a {{ color: #ff8c2f; }} .meta {{ color: #9a9a9a; }} .bad {{ color: #ff6b6b; }} .ok {{ color: #cfcfcf; }}
 .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin: 12px 0 20px; }}
+.tested {{ margin-top: 6px; color: #cfcfcf; }}
 .shot {{ display: block; background: #222; border: 1px solid #333; border-radius: 8px; overflow: hidden; text-decoration: none; color: #ddd; }}
 .shot.fail {{ border-color: #ff6b6b; }} .shot:hover {{ border-color: #ff8c2f; }}
 .shot img {{ width: 100%; height: 170px; object-fit: cover; object-position: top left; display: block; background: #111; }}
@@ -88,7 +97,7 @@ summary {{ cursor: pointer; }} ul {{ margin: 6px 0 4px; padding-left: 18px; font
 code {{ color: #9fd3ff; }}
 </style></head><body>
 <header><h1>Swarm View – UI tests</h1>
-<div class="meta">{now}{f" · commit <code>{esc(commit)}</code>" if commit else ""}{f' · <a href="{esc(run_url)}">workflow run</a>' if run_url else ""} · {nav}</div></header>
+<div class="meta">{now}{f" · commit <code>{esc(commit)}</code>" if commit else ""}{f' · <a href="{esc(run_url)}">workflow run</a>' if run_url else ""} · {nav}</div>{tested}</header>
 {"".join(parts) if parts else '<section><p>No results.</p></section>'}
 </body></html>'''
 open(os.path.join(site, 'index.html'), 'w').write(page)

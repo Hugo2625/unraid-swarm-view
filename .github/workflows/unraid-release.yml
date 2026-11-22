@@ -1,0 +1,76 @@
+name: New Unraid release
+
+# Every 3 hours: is there a new stable Unraid release (a release-notes page in github.com/unraid/docs)?
+# If that version has not been tested yet, run the full UI tests (1, 2 and 6 workers) against the webgui code of its
+# release line and publish the results page. Tested versions are remembered in the Actions cache – no commits.
+on:
+  schedule:
+    - cron: '41 */3 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Test the latest release again, even if it was tested already'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check for a new Unraid release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.latest.outputs.version }}
+      new: ${{ steps.decide.outputs.new }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Latest stable release
+        id: latest
+        run: python3 tests/bench/unraid_version.py --github-output
+      - name: Already tested?
+        id: seen
+        uses: actions/cache/restore@v5
+        with:
+          path: .unraid-tested
+          key: unraid-tested-${{ steps.latest.outputs.version }}
+      - name: Decide
+        id: decide
+        run: |
+          v="${{ steps.latest.outputs.version }}"
+          if [ "${{ steps.seen.outputs.cache-hit }}" = "true" ] && [ "${{ inputs.force }}" != "true" ]; then
+            echo "Unraid $v was tested already – nothing to do." >> "$GITHUB_STEP_SUMMARY"
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Unraid **$v** (webgui \`${{ steps.latest.outputs.webgui_ref }}\` @ \`${{ steps.latest.outputs.webgui_commit }}\`) → running the UI tests." >> "$GITHUB_STEP_SUMMARY"
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    name: UI tests
+    needs: check
+    if: needs.check.outputs.new == 'true'
+    uses: ./.github/workflows/ui-tests.yml
+    with:
+      unraid_version: ${{ needs.check.outputs.version }}
+    permissions:
+      contents: read
+      actions: read
+      pages: write
+      id-token: write
+
+  remember:
+    name: Remember the tested release
+    needs: [check, test]
+    if: always() && needs.check.outputs.new == 'true' && (needs.test.result == 'success' || needs.test.result == 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Result
+        run: |
+          mkdir -p .unraid-tested
+          echo "${{ needs.check.outputs.version }} ${{ needs.test.result }}" > .unraid-tested/result
+          echo "Unraid ${{ needs.check.outputs.version }}: UI tests **${{ needs.test.result }}** – https://hugo2625.github.io/unraid-swarm-view/" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/cache/save@v5
+        with:
+          path: .unraid-tested
+          key: unraid-tested-${{ needs.check.outputs.version }}
