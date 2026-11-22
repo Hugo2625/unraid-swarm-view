@@ -22,7 +22,8 @@ Each run also saves a few curated screenshots in `<out>/gallery` (Docker page, c
 
 ```bash
 sudo tests/bench/setup.sh            # clones the vendor sources, builds /usr/local/emhttp + /boot/config
-sudo UNRAID_VERSION=7.3.6 tests/bench/setup.sh   # webgui of another Unraid release line (or WEBGUI_REF=<branch|commit>)
+sudo UNRAID_VERSION=7.0.0 tests/bench/setup.sh   # webgui of any stable release since 7.0 as on its release day (or WEBGUI_REF=<branch|commit>)
+python3 unraid_version.py --list                 # all releases with date; --version 7.3.0 → webgui branch + commit
 sudo tests/bench/setup.sh --update   # same + git pull of all vendor sources
 pip install -r tests/bench/requirements.txt && playwright install chromium   # or an installed Chrome via --chrome
 ```

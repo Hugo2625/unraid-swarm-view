@@ -1,11 +1,14 @@
 name: New Unraid release
 
-# Every 3 hours: is there a new stable Unraid release (a release-notes page in github.com/unraid/docs)?
-# If that version has not been tested yet, run the full UI tests (1, 2 and 6 workers) against the webgui code of its
-# release line and publish the results page. Tested versions are remembered in the Actions cache – no commits.
+# Every 3 hours: tests every stable Unraid release since 7.0 (release notes in github.com/unraid/docs) that has not been
+# tested yet – each against the webgui code of its release day, with 1, 2 and 6 workers – and publishes the results page.
+# Tested versions are remembered in the Actions cache (no commits). A change of this file re-tests all versions once.
 on:
   schedule:
     - cron: '41 */3 * * *'
+  push:
+    branches: [main]
+    paths: ['.github/workflows/unraid-release.yml']
   workflow_dispatch:
     inputs:
       force:
@@ -18,33 +21,47 @@ permissions:
 
 jobs:
   check:
-    name: Check for a new Unraid release
+    name: Check for untested Unraid releases
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.latest.outputs.version }}
+      versions: ${{ steps.decide.outputs.versions }}
+      tested: ${{ steps.decide.outputs.tested }}
       new: ${{ steps.decide.outputs.new }}
     steps:
       - uses: actions/checkout@v6
-      - name: Latest stable release
-        id: latest
-        run: python3 tests/bench/unraid_version.py --github-output
-      - name: Already tested?
-        id: seen
+      - name: Stable releases since 7.0
+        id: all
+        run: python3 tests/bench/unraid_version.py --plan all --github-output
+      - name: Tested so far
         uses: actions/cache/restore@v5
         with:
           path: .unraid-tested
-          key: unraid-tested-${{ steps.latest.outputs.version }}
+          key: unraid-tested-${{ github.run_id }}
+          restore-keys: unraid-tested-
       - name: Decide
         id: decide
+        env:
+          ALL: ${{ steps.all.outputs.versions }}
+          FORCE: ${{ inputs.force }}
+          EVENT: ${{ github.event_name }}
         run: |
-          v="${{ steps.latest.outputs.version }}"
-          if [ "${{ steps.seen.outputs.cache-hit }}" = "true" ] && [ "${{ inputs.force }}" != "true" ]; then
-            echo "Unraid $v was tested already – nothing to do." >> "$GITHUB_STEP_SUMMARY"
-            echo "new=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "Unraid **$v** (webgui \`${{ steps.latest.outputs.webgui_ref }}\` @ \`${{ steps.latest.outputs.webgui_commit }}\`) → running the UI tests." >> "$GITHUB_STEP_SUMMARY"
-            echo "new=true" >> "$GITHUB_OUTPUT"
-          fi
+          python3 - <<'PY'
+          import glob, json, os
+          releases = json.loads(os.environ['ALL'])                     # newest first
+          tested = {l.split()[0] for f in glob.glob('.unraid-tested/*') for l in open(f) if l.split()}
+          if os.environ['EVENT'] == 'push':
+              todo = releases                                         # the watcher itself changed: test everything once
+          else:
+              todo = [v for v in releases if v not in tested]
+              if os.environ.get('FORCE') == 'true' and releases[0] not in todo:
+                  todo.insert(0, releases[0])
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as o:
+              o.write(f"versions={' '.join(todo)}\nnew={'true' if todo else 'false'}\n")
+              o.write(f"tested={' '.join(sorted(tested | set(todo), key=lambda v: tuple(map(int, v.split('.')))))}\n")
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as s:
+              s.write(f"Unraid releases since 7.0: {len(releases)} · tested before: {len(tested & set(releases))}\n\n")
+              s.write(f"→ testing now: **{', '.join(todo)}**\n" if todo else "Nothing new to test.\n")
+          PY
 
   test:
     name: UI tests
@@ -52,7 +69,7 @@ jobs:
     if: needs.check.outputs.new == 'true'
     uses: ./.github/workflows/ui-tests.yml
     with:
-      unraid_version: ${{ needs.check.outputs.version }}
+      unraid_version: ${{ needs.check.outputs.versions }}
     permissions:
       contents: read
       actions: read
@@ -60,17 +77,19 @@ jobs:
       id-token: write
 
   remember:
-    name: Remember the tested release
+    name: Remember the tested releases
     needs: [check, test]
     if: always() && needs.check.outputs.new == 'true' && (needs.test.result == 'success' || needs.test.result == 'failure')
     runs-on: ubuntu-latest
     steps:
       - name: Result
+        env:
+          TESTED: ${{ needs.check.outputs.tested }}
         run: |
           mkdir -p .unraid-tested
-          echo "${{ needs.check.outputs.version }} ${{ needs.test.result }}" > .unraid-tested/result
-          echo "Unraid ${{ needs.check.outputs.version }}: UI tests **${{ needs.test.result }}** – https://hugo2625.github.io/unraid-swarm-view/" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' $TESTED > .unraid-tested/tested.txt
+          echo "Tested: ${{ needs.check.outputs.versions }} – UI tests **${{ needs.test.result }}** – https://hugo2625.github.io/unraid-swarm-view/" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/cache/save@v5
         with:
           path: .unraid-tested
-          key: unraid-tested-${{ needs.check.outputs.version }}
+          key: unraid-tested-${{ github.run_id }}-${{ github.run_attempt }}

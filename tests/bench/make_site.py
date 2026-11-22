@@ -4,7 +4,7 @@
   python3 tests/bench/make_site.py <site-dir> <out-dir> [<out-dir> ...] [--prev <url-or-dir>]
 
 Every <out-dir> is an out/ or out-w<N>/ folder of run_tests.py (report.md, results.json, meta.json, gallery/*.png,
-<failed>.png) – together one test run against one Unraid version.
+<failed>.png). The folders are grouped by the Unraid version in their meta.json – one run can test several versions.
 
 --prev: the currently published site (URL) or a local copy. Its history.json and, per Unraid version, the page and
 screenshots of the latest run are taken over, so the site keeps
@@ -42,7 +42,7 @@ def plugin_version():
         return ''
 
 
-# ---------- this run ----------
+# ---------- this run (one entry per tested Unraid version) ----------
 variants = []
 for d in outs:
     res_file = os.path.join(d, 'results.json')
@@ -64,38 +64,44 @@ for d in outs:
                 continue
             imgs.append((kind, f[:-4], f'w{workers}-{kind}-{f}', os.path.join(folder, f)))
     meta = json.load(open(os.path.join(d, 'meta.json'))) if os.path.isfile(os.path.join(d, 'meta.json')) else {}
-    variants.append({'workers': workers, 'results': results, 'imgs': imgs, 'versions': meta.get('versions') or {}})
-variants.sort(key=lambda v: v['workers'])
+    vv = meta.get('versions') or {}
+    variants.append({'workers': workers, 'results': results, 'imgs': imgs, 'versions': vv, 'unraid': vv.get('unraid') or 'unknown'})
 if not variants:
     sys.exit('make_site: no results')
+groups = {}
+for v in sorted(variants, key=lambda v: v['workers']):
+    groups.setdefault(v['unraid'], []).append(v)
 
-vers = next((v['versions'] for v in variants if v['versions'].get('webgui')), {})
-unraid = vers.get('unraid') or 'unknown'
 now = datetime.datetime.now(datetime.timezone.utc)
 gh = os.environ.get('GITHUB_RUN_ID')
 run_url = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{gh}" if gh else ''
-summary = []
-for v in variants:
-    failed = [n for n, r in v['results'].items() if any(not c['ok'] for c in r['checks'])]
-    summary.append({'workers': v['workers'], 'scenarios': len(v['results']), 'checks': sum(len(r['checks']) for r in v['results'].values()), 'failed': failed})
-dirname = f'unraid/{re.sub(r"[^A-Za-z0-9._-]", "_", unraid)}'
-entry = {
-    'id': gh or now.strftime('local-%Y%m%d%H%M%S'),
-    'date': now.strftime('%Y-%m-%dT%H:%M:%SZ'),
-    'unraid': unraid,
-    'webgui': vers.get('webgui') or {},
-    'folderview3': (vers.get('folderview3') or {}).get('commit', ''),
-    'folderview2': (vers.get('folderview2') or {}).get('commit', ''),
-    'compose': (vers.get('compose') or {}).get('commit', ''),
-    'plugin': plugin_version(),
-    'commit': os.environ.get('GITHUB_SHA', '')[:7],
-    'event': os.environ.get('GITHUB_EVENT_NAME', 'local'),
-    'run_url': run_url,
-    'ok': all(not s['failed'] for s in summary),
-    'variants': summary,
-    'dir': dirname,
-    'files': [],
-}
+entries = []
+for unraid, vs in sorted(groups.items(), key=lambda kv: vkey(kv[0]), reverse=True):
+    vers = next((v['versions'] for v in vs if v['versions'].get('webgui')), {})
+    summary = []
+    for v in vs:
+        failed = [n for n, r in v['results'].items() if any(not c['ok'] for c in r['checks'])]
+        summary.append({'workers': v['workers'], 'scenarios': len(v['results']), 'checks': sum(len(r['checks']) for r in v['results'].values()), 'failed': failed})
+    entries.append({
+        'id': f"{gh or now.strftime('local-%Y%m%d%H%M%S')}-{unraid}",
+        'date': now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'unraid': unraid,
+        'released': vers.get('released', ''),
+        'webgui': vers.get('webgui') or {},
+        'folderview3': (vers.get('folderview3') or {}).get('commit', ''),
+        'folderview2': (vers.get('folderview2') or {}).get('commit', ''),
+        'compose': (vers.get('compose') or {}).get('commit', ''),
+        'plugin': plugin_version(),
+        'commit': os.environ.get('GITHUB_SHA', '')[:7],
+        'event': os.environ.get('GITHUB_EVENT_NAME', 'local'),
+        'run_url': run_url,
+        'ok': all(not x['failed'] for x in summary),
+        'variants': summary,
+        'dir': f'unraid/{re.sub(r"[^A-Za-z0-9._-]", "_", unraid)}',
+        'files': [],
+        '_variants': vs,
+    })
+tested_now = {e['unraid'] for e in entries}
 
 # ---------- previous site ----------
 history, prev_dir = [], None
@@ -121,7 +127,7 @@ if prev:
                 h = []
             want, seen = [], set()
             for e in h:
-                if e.get('unraid') in seen or e.get('unraid') == unraid:
+                if e.get('unraid') in seen or e.get('unraid') in tested_now:
                     continue
                 seen.add(e.get('unraid'))
                 want += [f"{e['dir']}/{f}" for f in e.get('files', [])]
@@ -189,46 +195,52 @@ def gallery(imgs, prefix=''):
         f'<span>{"❌ " if k == "failed" else ""}{esc(lbl)}</span></a>' for k, lbl, f in imgs) + '</div>'
 
 
-# ---------- report page of this run: unraid/<version>/ ----------
-vdir = os.path.join(site, dirname)
-if os.path.isdir(vdir):
-    shutil.rmtree(vdir)
-os.makedirs(os.path.join(vdir, 'img'), exist_ok=True)
-parts = []
-for v in variants:
-    s = next(x for x in summary if x['workers'] == v['workers'])
-    parts.append(f'<section id="w{v["workers"]}"><h2>{"✅" if not s["failed"] else "❌"} {v["workers"]} worker{"s" if v["workers"] > 1 else ""} '
-                 f'<small>{s["scenarios"]} scenarios · {s["checks"]} checks · {len(s["failed"])} failed</small></h2>')
-    if s['failed']:
-        parts.append('<p class="bad">Failed: ' + ', '.join(f'<a href="#w{v["workers"]}-{esc(n)}">{esc(n)}</a>' for n in s['failed']) + '</p>')
-    for kind, label, target, src in v['imgs']:
-        shutil.copy(src, os.path.join(vdir, 'img', target))
-        entry['files'].append(f'img/{target}')
-    parts.append(gallery([(k, lbl, f'img/{t}') for k, lbl, t, _ in v['imgs']]))
-    parts.append('<table class="report"><thead><tr><th>Scenario</th><th>Checks</th><th>Time</th></tr></thead><tbody>')
-    for n, r in v['results'].items():
-        bad = [c for c in r['checks'] if not c['ok']]
-        rows = ''.join(f'<li class="{"ok" if c["ok"] else "bad"}">{"✅" if c["ok"] else "❌"} <code>{esc(c["id"])}</code> {esc(str(c["info"])[:400])}</li>'
-                       for c in r['checks'])
-        parts.append(f'<tr id="w{v["workers"]}-{esc(n)}" class="{"bad" if bad else ""}"><td><details{" open" if bad else ""}><summary>{"❌" if bad else "✅"} {esc(n)}</summary>'
-                     f'<ul>{rows}</ul></details></td><td>{len(r["checks"]) - len(bad)}/{len(r["checks"])}</td><td>{r.get("seconds", "")} s</td></tr>')
-    parts.append('</tbody></table></section>')
-nav = ' · '.join(f'<a href="#w{v["workers"]}">{v["workers"]} worker{"s" if v["workers"] > 1 else ""}</a>' for v in variants)
+# ---------- report page per tested version: unraid/<version>/ ----------
+def report(entry):
+    vs = entry.pop('_variants')
+    vdir = os.path.join(site, entry['dir'])
+    if os.path.isdir(vdir):
+        shutil.rmtree(vdir)
+    os.makedirs(os.path.join(vdir, 'img'), exist_ok=True)
+    parts = []
+    for v, s in zip(vs, entry['variants']):
+        parts.append(f'<section id="w{v["workers"]}"><h2>{"✅" if not s["failed"] else "❌"} {v["workers"]} worker{"s" if v["workers"] > 1 else ""} '
+                     f'<small>{s["scenarios"]} scenarios · {s["checks"]} checks · {len(s["failed"])} failed</small></h2>')
+        if s['failed']:
+            parts.append('<p class="bad">Failed: ' + ', '.join(f'<a href="#w{v["workers"]}-{esc(n)}">{esc(n)}</a>' for n in s['failed']) + '</p>')
+        for kind, label, target, src in v['imgs']:
+            shutil.copy(src, os.path.join(vdir, 'img', target))
+            entry['files'].append(f'img/{target}')
+        parts.append(gallery([(k, lbl, f'img/{t}') for k, lbl, t, _ in v['imgs']]))
+        parts.append('<table class="report"><thead><tr><th>Scenario</th><th>Checks</th><th>Time</th></tr></thead><tbody>')
+        for n, r in v['results'].items():
+            bad = [c for c in r['checks'] if not c['ok']]
+            rows = ''.join(f'<li class="{"ok" if c["ok"] else "bad"}">{"✅" if c["ok"] else "❌"} <code>{esc(c["id"])}</code> {esc(str(c["info"])[:400])}</li>'
+                           for c in r['checks'])
+            parts.append(f'<tr id="w{v["workers"]}-{esc(n)}" class="{"bad" if bad else ""}"><td><details{" open" if bad else ""}><summary>{"❌" if bad else "✅"} {esc(n)}</summary>'
+                         f'<ul>{rows}</ul></details></td><td>{len(r["checks"]) - len(bad)}/{len(r["checks"])}</td><td>{r.get("seconds", "")} s</td></tr>')
+        parts.append('</tbody></table></section>')
+    nav = ' · '.join(f'<a href="#w{v["workers"]}">{v["workers"]} worker{"s" if v["workers"] > 1 else ""}</a>' for v in vs)
+    commitinfo = f' · commit <code>{esc(entry["commit"])}</code>' if entry['commit'] else ''
+    body = (f'<header><div class="meta"><a href="../../">← all Unraid versions</a></div><h1>Swarm View – UI tests – Unraid {esc(entry["unraid"])}</h1>'
+            f'<div class="meta">{when(entry)}{commitinfo}{runlink} · {nav}</div>{tested_line(entry)}</header>' + ''.join(parts))
+    open(os.path.join(vdir, 'index.html'), 'w').write(page(f'Swarm View – UI tests – Unraid {entry["unraid"]}', body))
+    entry['files'].append('index.html')
+
+
 runlink = f' · <a href="{esc(run_url)}">workflow run</a>' if run_url else ''
-commitinfo = f' · commit <code>{esc(entry["commit"])}</code>' if entry['commit'] else ''
-body = (f'<header><div class="meta"><a href="../../">← all Unraid versions</a></div><h1>Swarm View – UI tests – Unraid {esc(unraid)}</h1>'
-        f'<div class="meta">{when(entry)}{commitinfo}{runlink} · {nav}</div>{tested_line(entry)}</header>' + ''.join(parts))
-open(os.path.join(vdir, 'index.html'), 'w').write(page(f'Swarm View – UI tests – Unraid {unraid}', body))
-entry['files'].append('index.html')
+for e in entries:
+    report(e)
 
 # ---------- history: this run + previous runs; pages of the other versions ----------
-history = [entry] + [e for e in history if e.get('id') != entry['id']]
+ids = {e['id'] for e in entries}
+history = entries + [e for e in history if e.get('id') not in ids]
 history = history[:HISTORY_MAX]
 latest = {}                                   # Unraid version → latest run
 for e in history:
     latest.setdefault(e.get('unraid', 'unknown'), e)
 for ver, e in latest.items():
-    if e is entry:
+    if e in entries:
         continue
     src = os.path.join(prev_dir, e['dir']) if prev_dir else None
     have = [f for f in e.get('files', []) if src and os.path.isfile(os.path.join(src, f))]
@@ -264,7 +276,8 @@ rows = []
 for ver in versions:
     e = latest[ver]
     lp = last_passing_plugin(ver)
-    rows.append(f'<tr><td><b>{link(e, "Unraid " + esc(ver))}</b></td><td>{result(e)}</td><td>{esc(e["plugin"])}</td>'
+    rel = f' <small class="meta">{esc(e["released"])}</small>' if e.get('released') else ''
+    rows.append(f'<tr><td><b>{link(e, "Unraid " + esc(ver))}</b>{rel}</td><td>{result(e)}</td><td>{esc(e["plugin"])}</td>'
                 f'<td>{esc(lp) if lp else "–"}</td><td>{esc(when(e))}</td>'
                 f'<td><code>{esc((e.get("webgui") or {}).get("ref", ""))}</code> @ <code>{esc((e.get("webgui") or {}).get("commit", ""))}</code></td>'
                 f'<td><code>{esc(e["folderview3"])}</code></td><td><code>{esc(e["folderview2"])}</code></td><td><code>{esc(e["compose"])}</code></td>'
@@ -293,9 +306,15 @@ hist = ('<section><h2>All runs <small>' + str(len(history)) + ' (newest first)</
         '<th>Date</th><th>Unraid</th><th>Result</th><th>Swarm View</th><th>Folder View 3</th><th>Folder View 2</th><th>Compose Manager</th>'
         '<th>Workers</th><th>Trigger</th><th></th></tr></thead><tbody>' + ''.join(hrows) + '</tbody></table></div></section>')
 
-head = (f'<header><h1>Swarm View – UI tests</h1><div class="meta">The original Unraid Docker page with Folder View 3/2, Compose Manager and '
-        f'Swarm View in headless Chrome, with 1, 2 and 6 worker nodes. Latest run: {esc(when(entry))}, Unraid {esc(entry["unraid"])} – {result(entry)}'
-        f'{runlink}</div></header>')
+if len(entries) == 1:
+    lastrun = f'Unraid {esc(entries[0]["unraid"])} – {result(entries[0])}'
+else:
+    bad = [e['unraid'] for e in entries if not e['ok']]
+    lastrun = (f'{len(entries)} Unraid versions – <span class="good">{len(entries) - len(bad)} passed</span>'
+               + (f', <span class="bad">failed: {esc(", ".join(bad))}</span>' if bad else ''))
+head = (f'<header><h1>Swarm View – UI tests</h1><div class="meta">The original Unraid Docker page of each Unraid release (its webgui code on the '
+        f'release day) with Folder View 3/2, Compose Manager and Swarm View in headless Chrome, with 1, 2 and 6 worker nodes. '
+        f'Latest run: {esc(when(entries[0]))}, {lastrun}{runlink}</div></header>')
 open(os.path.join(site, 'index.html'), 'w').write(page('Swarm View – UI tests', head + compat + shots + hist))
 open(os.path.join(site, '.nojekyll'), 'w').write('')
 
@@ -305,5 +324,5 @@ badge = {'schemaVersion': 1, 'label': 'tested on Unraid', 'namedLogo': 'unraid',
          'message': newest['unraid'] + ('' if newest['ok'] else ' failing'),
          'color': ('brightgreen' if newest['unraid'] != 'unknown' else 'green') if newest['ok'] else 'red'}
 json.dump(badge, open(os.path.join(site, 'badge.json'), 'w'))
-print(f'site: {site}/ – Unraid {unraid}: {"passed" if entry["ok"] else "FAILED"}, {len(entry["files"]) - 1} images; '
-      f'{len(history)} runs, {len(versions)} Unraid version(s); badge: {badge["message"]}')
+print(f'site: {site}/ – ' + ', '.join(f'Unraid {e["unraid"]}: {"passed" if e["ok"] else "FAILED"} ({len(e["files"]) - 1} images)' for e in entries)
+      + f'; {len(history)} runs, {len(versions)} Unraid version(s); badge: {badge["message"]}')

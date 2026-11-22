@@ -11,6 +11,14 @@ if (empty($SVTB_PAGE)) putenv('SV_DOCKER=/bin/false');
 require_once "$docroot/webGui/include/Wrappers.php";
 require_once "$docroot/webGui/include/Helpers.php";
 require_once "$docroot/webGui/include/PageBuilder.php";
+if (!function_exists('includePageStylesheets')) {
+    // Unraid 7.0: page stylesheets were included inline in DefaultPageLayout.php
+    function includePageStylesheets(array $page): void {
+        global $docroot, $theme;
+        $css = "/{$page['root']}/sheets/{$page['name']}";
+        foreach (["$css.css", "$css-$theme.css"] as $f) if (is_file($docroot . $f)) echo '<link type="text/css" rel="stylesheet" href="', autov($f), '">', "\n";
+    }
+}
 if (!function_exists('_')) { function _($s, $o = 0) { return $s; } }
 if (!function_exists('parse_text')) { function parse_text($t) { return preg_replace('/_\((.+?)\)_/m', '$1', $t); } }
 if (!function_exists('my_disk')) { function my_disk($d) { return $d; } }
@@ -57,8 +65,13 @@ $cookieView = $S['view'] === 'advanced' ? 'advanced' : 'basic';
 ?><!DOCTYPE html>
 <html lang="<?= $S['lang'] ?>"><head><meta charset="utf-8"><title>Docker – <?= htmlspecialchars($S['name']) ?></title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<?php foreach (['default-fonts', 'default-cases', 'font-awesome', 'context.standalone', 'jquery.sweetalert', 'jquery.ui', 'default-color-palette', 'default-base', 'default-dynamix', "themes/$theme"] as $css): ?>
-<link type="text/css" rel="stylesheet" href="<?php autov("/webGui/styles/$css.css") ?>">
+<?php
+// the stylesheets of THIS webgui version, in its order (7.0: default-<theme>/dynamix-<theme>, 7.1+: themes/<theme> …)
+preg_match_all('#autov\("(/webGui/styles/[^"]+\.css)"\)#', (string)@file_get_contents("$docroot/webGui/include/DefaultPageLayout.php"), $m);
+$sheets = array_unique(array_map(fn($f) => str_replace(['{$theme}', '$theme', "{\$display['theme']}"], $theme, $f), $m[1]));
+if (!$sheets) $sheets = array_map(fn($c) => "/webGui/styles/$c.css", ['default-fonts', 'default-cases', 'font-awesome', 'context.standalone', 'jquery.sweetalert', 'jquery.ui', 'default-color-palette', 'default-base', 'default-dynamix', "themes/$theme"]);
+foreach ($sheets as $css): ?>
+<link type="text/css" rel="stylesheet" href="<?php autov($css) ?>">
 <?php endforeach; ?>
 <?php foreach ($pages as $page) includePageStylesheets($page); ?>
 <script>
@@ -84,8 +97,9 @@ SVTB.nchan = {};
 window.NchanSubscriber = function (url) { this.url = url.split(',')[0]; this.h = {}; SVTB.nchan[this.url] = this; };
 NchanSubscriber.prototype.on = function (ev, fn) { (this.h[ev] = this.h[ev] || []).push(fn); return this; };
 NchanSubscriber.prototype.addEventListener = NchanSubscriber.prototype.on;
-NchanSubscriber.prototype.start = function () { this.running = true; };
-NchanSubscriber.prototype.stop = function () { this.running = false; };
+NchanSubscriber.prototype.start = function () { this.running = true; return this; };
+NchanSubscriber.prototype.monitor = function () { return this; };   // 7.1: dockerload.start().monitor()
+NchanSubscriber.prototype.stop = function () { this.running = false; return this; };
 NchanSubscriber.prototype.emit = function (msg) { (this.h.message || []).forEach(fn => fn(msg)); };
 function pauseEvents() {} function resumeEvents() {}
 </script>

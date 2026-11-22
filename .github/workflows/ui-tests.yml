@@ -2,8 +2,9 @@ name: UI tests
 
 # Runs the original Unraid Docker page with Folder View 3/2, Compose Manager and Swarm View in headless Chrome
 # (tests/bench). Pull requests: quick set with 1 worker. Nightly and on demand: all scenarios with 1, 2 and 6 workers.
-# Unraid code: the latest stable release line (tests/bench/unraid_version.py) unless a version/branch is given;
-# Folder View and Compose Manager: their current state. New Unraid releases trigger this via unraid-release.yml.
+# Unraid code: the webgui of a stable release as it was on its release day (tests/bench/unraid_version.py) – by default
+# the latest release, or the given versions; Folder View and Compose Manager: their current state.
+# New Unraid releases trigger this via unraid-release.yml. All versions of one run are published together.
 on:
   pull_request:
   schedule:
@@ -11,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       unraid_version:
-        description: 'Unraid version (e.g. 7.3.6) – empty = latest stable release'
+        description: 'Unraid version(s): empty = latest stable release · "7.3.6" or "7.2.9 7.3.6" · "lines" = newest of each 7.x line · "all" = every release since 7.0'
         required: false
         default: ''
       webgui_ref:
@@ -33,16 +34,36 @@ permissions:
   contents: read
 
 jobs:
+  plan:
+    name: Unraid versions to test
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.plan.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: plan
+        env:
+          SPEC: ${{ inputs.unraid_version }}
+          REF: ${{ inputs.webgui_ref }}
+        run: |
+          if [ -n "$REF" ]; then
+            echo 'versions=[""]' >> "$GITHUB_OUTPUT"; echo "webgui \`$REF\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            python3 tests/bench/unraid_version.py --plan "$SPEC" --github-output | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
   ui:
-    name: UI (${{ matrix.workers }} worker)
+    name: UI (Unraid ${{ matrix.version || inputs.webgui_ref }}, ${{ matrix.workers }} worker)
+    needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: ui-${{ github.ref }}-${{ inputs.unraid_version || inputs.webgui_ref || 'latest' }}-${{ matrix.workers }}
+      group: ui-${{ github.ref }}-${{ matrix.version || inputs.webgui_ref }}-${{ matrix.workers }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     strategy:
       fail-fast: false
       matrix:
+        version: ${{ fromJSON(needs.plan.outputs.versions) }}
         workers: ${{ fromJSON(github.event_name == 'pull_request' && '[1]' || '[1, 2, 6]') }}
     steps:
       - uses: actions/checkout@v6
@@ -67,7 +88,7 @@ jobs:
           fi
       - name: Build the fake Unraid (web root, plugins, flash config)
         env:
-          UNRAID_VERSION: ${{ inputs.unraid_version }}
+          UNRAID_VERSION: ${{ matrix.version }}
           WEBGUI_REF: ${{ inputs.webgui_ref }}
         run: sudo --preserve-env=UNRAID_VERSION,WEBGUI_REF tests/bench/setup.sh
       - name: Start the bench server
@@ -83,19 +104,19 @@ jobs:
           r=$(ls -d tests/bench/out*/report.md 2>/dev/null | head -1)
           [ -n "$r" ] && { sed -n '1,5p' "$r"; grep -E '^## ❌' "$r" || true; } >> "$GITHUB_STEP_SUMMARY"
           g=$(ls -d tests/bench/out*/gallery 2>/dev/null | head -1)
-          [ -n "$g" ] && { echo; echo "**Screenshots** (artifact *screenshots-${{ matrix.workers }}-worker*): $(ls "$g" | sed 's/\.png$//' | paste -sd ',' | sed 's/,/, /g')"; } >> "$GITHUB_STEP_SUMMARY"
+          [ -n "$g" ] && { echo; echo "**Screenshots** (artifact *screenshots-${{ matrix.version || 'ref' }}-${{ matrix.workers }}-worker*): $(ls "$g" | sed 's/\.png$//' | paste -sd ',' | sed 's/,/, /g')"; } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: screenshots-${{ matrix.workers }}-worker
+          name: screenshots-${{ matrix.version || 'ref' }}-${{ matrix.workers }}-worker
           path: tests/bench/out*/gallery/
           retention-days: 30
       - name: Upload full report
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: ui-report-${{ matrix.workers }}-worker
+          name: ui-report-${{ matrix.version || 'ref' }}-${{ matrix.workers }}-worker
           path: |
             tests/bench/out*/
             /tmp/bench-server.log
