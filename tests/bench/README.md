@@ -41,6 +41,7 @@ python3 run_tests.py --jobs 8 --shots # more tabs in parallel, full-page screens
 python3 run_tests.py default fv2      # single scenarios
 python3 run_tests.py --workers 6      # same scenarios with 6 worker nodes → out-w6/ (also 2 or 3)
 python3 backend/test_backend.py       # api.php / actions.php with a fake docker CLI in 13 cluster states (incl. 3 workers, worker down)
+python3 backend/test_monitor.py       # watchdog against a simulated swarm (swarm-sim.py) over simulated time: failover, returns, backoff, log
 ```
 
 ## Scenarios (`scenarios/<name>.json`, merged with the defaults in `server/scenario.php`)

@@ -8,7 +8,15 @@ require_once __DIR__ . '/common.php';
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 
+/** What the current action does – logged with its result when reply() is called (settings → Log) */
+$SV_ACT = '';
+function act(string $what): void { $GLOBALS['SV_ACT'] = $what; }
+
 function reply(bool $ok, array $extra = []): void {
+    if ($GLOBALS['SV_ACT'] !== '') {
+        $detail = trim(($ok ? '' : ($extra['error'] ?? '') . "\n") . ($extra['log'] ?? ''));
+        sv_log($ok ? 'info' : 'error', 'action', $GLOBALS['SV_ACT'] . ($ok ? '' : ' – ' . sv_t('failed')), $detail);
+    }
     echo json_encode(['ok' => $ok] + $extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
@@ -28,6 +36,7 @@ if ($action === 'logs') {
 if ($action === 'svc-restart') {
     $svc = $_POST['service'] ?? '';
     if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/', $svc)) reply(false, ['error' => sv_t('Invalid service name')]);
+    act(sv_t('Restart service {0}', $svc));
     [$rc, $out] = sv_run([$DOCKER, 'service', 'update', '--force', '--detach', $svc]);
     reply($rc === 0, ['log' => $rc === 0 ? sv_t('{0} is being rolled out again.', $svc) : $out]);
 }
@@ -44,6 +53,7 @@ if ($action === 'place') {
     if (!in_array($mode, ['', 'fixed', 'prefer'], true)) reply(false, ['error' => sv_t('Invalid mode')]);
     if ($mode === '') $node = '';
     elseif (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/', $node)) reply(false, ['error' => sv_t('Invalid node name')]);
+    act(sv_t('Placement of {0}: {1}', $svc, $mode === 'fixed' ? sv_t('only {0}', $node) : ($mode === 'prefer' ? sv_t('prefer {0}', $node) : sv_t('automatic'))));
 
     [$rc, $out] = sv_run([$DOCKER, 'service', 'inspect', $svc, '--format', '{{json .}}']);
     $svcObj = $rc === 0 ? json_decode($out, true) : null;
@@ -111,6 +121,7 @@ if ($action === 'place') {
 }
 
 if ($action === 'cleanup') {
+    act(sv_t('Cleanup'));
     $cfg = sv_cfg();
     [$ok, $log] = sv_cleanup($cfg['CLEANUP_IMAGES'] === 'yes', 40);
     reply($ok, ['log' => $log]);
@@ -119,6 +130,7 @@ if ($action === 'cleanup') {
 if ($action === 'svc-update' || $action === 'svc-rollback') {
     $svc = $_POST['service'] ?? '';
     if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/', $svc)) reply(false, ['error' => sv_t('Invalid service name')]);
+    act($action === 'svc-rollback' ? sv_t('Rollback {0}', $svc) : sv_t('Update {0}', $svc));
     if ($action === 'svc-rollback') {
         [$rc, $out] = sv_run([$DOCKER, 'service', 'rollback', '--detach', $svc], null, [], 60);
         reply($rc === 0, $rc === 0 ? ['log' => sv_t('{0} is rolled back to the previous version.', $svc)] : ['error' => sv_t('{0} failed', 'Rollback'), 'log' => $out]);
@@ -137,6 +149,7 @@ if ($action === 'svc-update' || $action === 'svc-rollback') {
 
 if ($action === 'update-check') {
     require_once __DIR__ . '/updates.php';   // top level → Unraid's Docker classes available globally
+    act(sv_t('Update check'));
     $u = sv_check_updates();
     $avail = array_keys(array_filter($u['services'], fn($x) => $x['update']));
     $log = sv_t('{0} services checked.', count($u['services'])) . ' ' . ($avail ? sv_t('Updates available: {0}', implode(', ', $avail)) : sv_t('Everything is up to date.'));
@@ -147,6 +160,12 @@ if ($action === 'update-check') {
 if ($action === 'notify-test') {
     $ok = sv_notify(sv_t('Test notification'), sv_t('Swarm View can notify you.'), $_POST['level'] ?? 'normal');
     reply($ok, $ok ? ['log' => sv_t('Test notification sent.')] : ['error' => sv_t('{0} failed', 'notify')]);
+}
+
+if ($action === 'log-clear') {
+    if (!sv_log_clear()) reply(false, ['error' => sv_t('The log could not be cleared')]);
+    sv_log('info', 'settings', sv_t('Log cleared.'));
+    reply(true, ['log' => sv_t('Log cleared.')]);
 }
 
 if ($action === 'settings') {
@@ -193,6 +212,7 @@ if ($action === 'settings') {
         'REBALANCE_DELAY'      => $num('REBALANCE_DELAY', 1, 120),
         'STATS'                => $pick('STATS', $yn),
         'STATS_INTERVAL'       => $num('STATS_INTERVAL', 5, 300),
+        'LOG_LEVEL'            => $pick('LOG_LEVEL', array_keys(SV_LOG_LEVELS)),
     ];
     if (isset($_POST['NOTIFY_IGNORE'])) {
         $re = str_replace('"', '', trim((string)$_POST['NOTIFY_IGNORE']));
@@ -202,11 +222,23 @@ if ($action === 'settings') {
         $in['NOTIFY_IGNORE'] = $re;
     }
     if (!sv_cfg_write($in)) reply(false, ['error' => sv_t('Settings could not be saved')]);
+    $changes = [];
+    foreach ($in as $k => $v) if ((string)($cfg[$k] ?? '') !== (string)$v) $changes[] = "$k: {$cfg[$k]} → $v";
+    if ($changes) sv_log('info', 'settings', sv_t('Settings saved.'), implode("\n", $changes));
     $log = [sv_t('Settings saved.'), sv_cron_apply($in)];
+    // automatic return switched off: the watchdog may not run anymore → finish pending returns now
+    if ($in['REBALANCE'] !== 'yes' && ($gone = sv_rebalance_forget(null, true))) {
+        $log[] = sv_t('Pending returns stopped: {0}', implode(', ', $gone));
+        sv_log('info', 'settings', sv_t('Pending returns stopped: {0}', implode(', ', $gone)));
+    }
     // Worth a popup: watchdog runs, agent (re)started or stopped, swarm values changed
     $notable = sv_monitor_needed($in) && !sv_monitor_needed($cfg);
     $sw0 = sv_swarm_settings();
-    if ($sw0['active'] && $sw0['manager']) { $log[] = sv_agent_apply($in, $agentChanged); $notable = $notable || $agentChanged; }
+    if ($sw0['active'] && $sw0['manager']) {
+        $log[] = sv_agent_apply($in, $agentChanged);
+        $notable = $notable || $agentChanged;
+        if ($agentChanged) sv_log(str_contains(end($log), "\n") ? 'error' : 'info', 'agent', strtok(end($log), "\n"), end($log));
+    }
 
     // only touch swarm cluster values when they changed
     $sw = sv_swarm_settings();
@@ -232,6 +264,7 @@ if ($action === 'node-availability') {
     $avail = $_POST['availability'] ?? '';
     if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/', $node)) reply(false, ['error' => sv_t('Invalid node')]);
     if (!in_array($avail, ['active', 'pause', 'drain'], true)) reply(false, ['error' => sv_t('Invalid availability')]);
+    act(sv_t('Node {0}: availability {1}', $node, $avail));
     [$rc, $out] = sv_run([$DOCKER, 'node', 'update', '--availability', $avail, $node]);
     $txt = ['active' => sv_t('active'), 'pause' => sv_t('paused (no new containers)'), 'drain' => sv_t('in maintenance (containers are moved away)')][$avail];
     reply($rc === 0, $rc === 0 ? ['log' => sv_t('{0} is now {1}.', $node, $txt)] : ['error' => sv_t('{0} failed', 'node update'), 'log' => $out]);
@@ -290,6 +323,7 @@ YML;
 
 switch ($action) {
     case 'create':
+        act(sv_t('Create stack {0}', $name));
         if (is_dir($dir)) reply(false, ['error' => sv_t('Stack "{0}" already exists', $name)]);
         if (!@mkdir($dir, 0755, true)) reply(false, ['error' => sv_t('Folder could not be created: {0}', $dir)]);
         file_put_contents($yml, sprintf($TEMPLATE, $name));
@@ -314,6 +348,7 @@ switch ($action) {
         reply(true, ['description' => $desc]);
 
     case 'save':
+        act(sv_t('Save stack {0}', $name));
         if (!is_dir($dir)) reply(false, ['error' => sv_t('Stack "{0}" does not exist', $name)]);
         $ymlNew = normalize($_POST['yml'] ?? '');
         if ($ymlNew === '') reply(false, ['error' => sv_t('docker-stack.yml must not be empty')]);
@@ -323,24 +358,29 @@ switch ($action) {
         reply(true, ['valid' => $valid, 'log' => $log]);
 
     case 'deploy':
+        $update = ($_POST['mode'] ?? '') === 'update';
+        act($update ? sv_t('Update Stack {0}', $name) : sv_t('Stack Up {0}', $name));
         if (!is_file($yml)) reply(false, ['error' => sv_t('No {0} for "{1}"', $STACK_FILE, $name)]);
         [$valid, $vlog] = validate();
         if (!$valid) reply(false, ['error' => sv_t('Stack file invalid'), 'log' => $vlog]);
 
         // Stack Up: resolve images only if they changed in the file (no restart of unchanged services)
         // Update Stack: ask the registry for new versions
-        $update = ($_POST['mode'] ?? '') === 'update';
         $cmd = [$DOCKER, 'stack', 'deploy', '--detach=true', '--with-registry-auth', '--resolve-image', $update ? 'always' : 'changed'];
         if (sv_cfg()['DEPLOY_PRUNE'] === 'yes') $cmd[] = '--prune';
         array_push($cmd, '-c', $STACK_FILE, $name);
         [$rc, $out] = sv_run($cmd, $dir, sv_parse_env($env), 300);
+        // the deploy sets constraints and labels from the file again → returns in progress of this stack are void
+        if ($rc === 0) sv_rebalance_forget(fn($svc) => str_starts_with($svc, "{$name}_"), false);
         reply($rc === 0, ['log' => ($update ? sv_t('Update: pulling the newest image versions.') . "\n" : '') . ($out ?: sv_t('Deploy started.'))]);
 
     case 'remove':
+        act(sv_t('Stack Down {0}', $name));
         [$rc, $out] = sv_run([$DOCKER, 'stack', 'rm', $name]);
         reply($rc === 0, ['log' => $out]);
 
     case 'restart':
+        act(sv_t('Restart stack {0}', $name));
         [$rc, $out] = sv_run([$DOCKER, 'stack', 'services', $name, '--format', '{{.Name}}']);
         if ($rc !== 0) reply(false, ['log' => $out]);
         $log = [];
@@ -353,6 +393,7 @@ switch ($action) {
         reply($ok, ['log' => implode("\n", $log) ?: sv_t('No services in the stack.')]);
 
     case 'delete':
+        act(sv_t('Delete stack {0}', $name));
         if (deployed($name)) reply(false, ['error' => sv_t('Stack is still deployed – "Stack Down" first')]);
         if (!is_dir($dir)) reply(false, ['error' => sv_t('Stack "{0}" does not exist', $name)]);
         [$rc, $out] = sv_run(['rm', '-rf', '--', $dir]);

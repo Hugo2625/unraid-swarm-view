@@ -18,7 +18,7 @@ The interface is available in **English** and **German**. It follows Unraid's di
 - **Notifications** through Unraid: node offline, crash loops, tasks that cannot start, node changes, image updates – each configurable.
 - **Update hints** with one-click update and rollback.
 - **Cleanup** of stopped task containers and unused images on all nodes, on demand or scheduled.
-- **Settings** with tabs: general, nodes (with warnings such as missing memory cgroup or Docker version mismatch), watchdog, maintenance, status.
+- **Settings** with tabs: general, nodes (with warnings such as missing memory cgroup or Docker version mismatch), watchdog, maintenance, status and a **log** of what happens in the background (watchdog decisions, failovers and returns, your actions with their output, errors; level, source and search filter, live view, download).
 
 ![Docker page: local containers, Swarm containers on Unraid and on the Pi, Swarm section below](docs/docker-page.png)
 
@@ -67,7 +67,7 @@ Bugs and ideas: [GitHub issues](https://github.com/Hugo2625/unraid-swarm-view/is
 
 Every push and pull request runs automatic checks ([GitHub Actions](../../actions)):
 
-- **CI** – PHP/JS syntax, translations complete, `swarm-view.plg` built from the current `src/`, version raised when `src/` changed, backend tests of `api.php`/`actions.php` against a fake Docker CLI (`python3 tools/ci_checks.py`, `python3 tests/bench/backend/test_backend.py`)
+- **CI** – PHP/JS syntax, translations complete, `swarm-view.plg` built from the current `src/`, version raised when `src/` changed, backend tests of `api.php`/`actions.php` against a fake Docker CLI and of the watchdog against a simulated swarm over simulated time – failover, return to the preferred node, failed returns, log (`python3 tools/ci_checks.py`, `python3 tests/bench/backend/test_backend.py`, `python3 tests/bench/backend/test_monitor.py`)
 - **UI tests** – the original Unraid Docker page with Folder View 3/2, Compose Manager and Swarm View in headless Chrome, 44 scenarios (plugins on/off, section position, views, themes, languages, narrow screens, API errors, slow API, nodes down, settings). Pull requests: quick set; nightly: everything with 1, 2 and 6 worker nodes against the latest stable Unraid release and the current Folder View / Compose Manager. A new Unraid release is detected within 3 hours and tested automatically; the *tested on Unraid* badge above shows the version of the last published run and turns red if it failed. Results with screenshots of the latest nightly/manual run: **[hugo2625.github.io/unraid-swarm-view](https://hugo2625.github.io/unraid-swarm-view/)** (also attached to each run). Details: [tests/bench](tests/bench)
 - **New Unraid release** – every 3 hours: new stable Unraid version (release notes in `unraid/docs`)? → full UI tests against the webgui code of that release line, results page updated
 

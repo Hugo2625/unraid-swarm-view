@@ -1,4 +1,9 @@
 # Changelog
+### 2026.11.22
+- "returning …" badge only while a return to the preferred node really runs: it no longer sticks to services that run stable, that have already arrived or that have no preferred node anymore
+- Return to the preferred node: if the service does not start there, the return is cancelled after 5 minutes and Swarm runs it elsewhere again; the next attempt follows after 30 minutes, then 1 h, 2 h … (before: a new attempt – and a restart – every 10 minutes)
+- Switching "automatic return" off ends pending returns at once and removes their temporary node binding; Stack Up forgets returns of that stack; returns of deleted services are forgotten
+- New settings tab "Log": what Swarm View does in the background – watchdog decisions (failover, return, crash loops, nodes offline/online, notifications), your actions on the Docker page with their output, changed settings and errors. Filter by level, source and text, live view, details per entry, download, clear. Recording level: errors / warnings / info (default) / debug (every watchdog run and why a service does or does not return)
 ### 2026.11.21d
 - Folder View: when the Swarm data arrived while Folder View was still building its folders, a folder could stay empty – Swarm View now waits until Folder View is done before it reloads the list
 ### 2026.11.21c

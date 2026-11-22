@@ -49,6 +49,7 @@ class SvAlerts {
 
     public function send(string $subject, string $desc, string $level, string $msg = ''): void {
         $this->sent[] = "[$level] $subject – $desc";
+        sv_log($level === 'normal' ? 'info' : 'warn', 'watchdog', sv_t('Notification: {0}', $subject), $desc);
         // history for the settings page (status)
         $this->st['history'] ??= [];
         $this->st['history'][] = ['t' => sv_now(), 'level' => $level, 'subject' => $subject, 'desc' => $desc];
@@ -60,14 +61,30 @@ class SvAlerts {
 function sv_monitor_run(array $cfg, bool $verbose = false): array {
     global $DOCKER;
     $log = [];
+    $t0 = microtime(true);
     $state = sv_state_read('monitor');
     $now = sv_now();
+    // event: status feed + syslog + log; debug only goes to the log
+    $ev = function (string $level, string $msg, ?string $detail = null) use (&$log) { $log[] = $msg; sv_log($level, 'watchdog', $msg, $detail); };
+    $dbg = fn(string $msg, ?string $detail = null) => sv_log('debug', 'watchdog', $msg, $detail);
 
     $sw = sv_swarm_settings();
-    if (!$sw['active'] || !$sw['manager']) return ['Kein aktiver Swarm-Manager – nichts zu tun.'];
+    if (!$sw['active'] || !$sw['manager']) {
+        if (empty($state['noManager'])) {
+            sv_log('warn', 'watchdog', sv_t('No active Swarm manager on this server – the watchdog does nothing.'));
+            $state['noManager'] = 1;
+            sv_state_write('monitor', $state);
+        }
+        return [sv_t('No active Swarm manager on this server – the watchdog does nothing.')];
+    }
+    if (!empty($state['noManager'])) {
+        unset($state['noManager']);
+        sv_log('info', 'watchdog', sv_t('Swarm manager active again – the watchdog continues.'));
+    }
 
     /* ---------- Daten sammeln ---------- */
     [$rc, $out] = sv_run([$DOCKER, 'node', 'ls', '--format', '{{json .}}']);
+    if ($rc !== 0) sv_log('error', 'watchdog', sv_t('{0} failed', 'docker node ls'), $out);
     $nodes = [];
     foreach (explode("\n", $rc === 0 ? $out : '') as $l) {
         $n = json_decode(trim($l), true);
@@ -80,6 +97,25 @@ function sv_monitor_run(array $cfg, bool $verbose = false): array {
     $state['readySince'] ??= [];
     foreach ($nodes as $h => $n) {
         if ($n['ready']) $state['readySince'][$h] ??= $now; else unset($state['readySince'][$h]);
+    }
+    // node state changes for the log
+    if ($rc === 0) {
+        $state['nodeState'] ??= [];
+        $label = ['active' => sv_t('online'), 'down' => sv_t('offline'), 'drain' => sv_t('in maintenance'), 'pause' => sv_t('paused')];
+        $known = $state['nodeState'];
+        foreach ($nodes as $h => $n) {
+            $st = !$n['ready'] ? 'down' : ($n['avail'] ?: 'active');
+            $prev = $state['nodeState'][$h] ?? null;
+            if ($prev !== null && $prev !== $st) {
+                sv_log($st === 'down' ? 'warn' : 'info', 'watchdog', sv_t('Node {0} is {1} (before: {2}).', $h, $label[$st] ?? $st, $label[$prev] ?? $prev));
+            } elseif ($prev === null && $known) {
+                sv_log('info', 'watchdog', sv_t('Node {0} joined the swarm ({1}).', $h, $label[$st] ?? $st));
+            }
+            $state['nodeState'][$h] = $st;
+        }
+        foreach (array_keys($state['nodeState']) as $h) {
+            if (!isset($nodes[$h])) { sv_log('info', 'watchdog', sv_t('Node {0} left the swarm.', $h)); unset($state['nodeState'][$h]); }
+        }
     }
 
     $ignore = trim($cfg['NOTIFY_IGNORE']);
@@ -104,6 +140,7 @@ function sv_monitor_run(array $cfg, bool $verbose = false): array {
     }
     if ($services) {
         [$rc, $out] = sv_run(array_merge([$DOCKER, 'service', 'ps', '--no-trunc', '--filter', 'desired-state=running', '--format', '{{json .}}'], array_keys($services)), null, [], 30);
+        if ($rc !== 0) sv_log('error', 'watchdog', sv_t('{0} failed', 'docker service ps'), $out);
         foreach (explode("\n", $rc === 0 ? $out : '') as $l) {
             $t = json_decode(trim($l), true);
             if (!is_array($t)) continue;
@@ -146,7 +183,13 @@ function sv_monitor_run(array $cfg, bool $verbose = false): array {
         }
         $state['taskSeen'][$name] = $ids;
         $state['restarts'][$name] = array_values(array_filter($state['restarts'][$name] ?? [], fn($t) => $now - $t < $window));
-        if (!$state['restarts'][$name]) unset($state['restarts'][$name]);
+        if (!$state['restarts'][$name]) unset($state['restarts'][$name], $state['crashLogged'][$name]);
+        $cnt = count($state['restarts'][$name] ?? []);
+        if ($cnt >= max(2, (int)$cfg['NOTIFY_CRASH_COUNT']) && empty($state['crashLogged'][$name])) {
+            $state['crashLogged'][$name] = 1;
+            sv_log('warn', 'watchdog', sv_t('{0} keeps restarting', $name) . ' – ' . sv_t('{0} restarts in {1} minutes.', $cnt, $cfg['NOTIFY_CRASH_WINDOW']),
+                implode("\n", array_unique(array_filter(array_column($s['tasks'], 'error')))));
+        }
 
         if ($notifyOn && $cfg['NOTIFY_CRASH'] === 'yes' && !$ignored($name)) {
             $cnt = count($state['restarts'][$name] ?? []);
@@ -157,7 +200,21 @@ function sv_monitor_run(array $cfg, bool $verbose = false): array {
             }
         }
     }
-    foreach (array_keys($state['taskSeen']) as $n) if (!isset($services[$n])) unset($state['taskSeen'][$n], $state['restarts'][$n]);
+    foreach (array_keys($state['taskSeen']) as $n) if (!isset($services[$n])) unset($state['taskSeen'][$n], $state['restarts'][$n], $state['crashLogged'][$n]);
+
+    /* ---------- Not placeable: log (independent of notifications) ---------- */
+    $state['pendingLogged'] ??= [];
+    foreach ($services as $name => $s) {
+        $pend = array_filter($s['tasks'], fn($t) => $t['pending']);
+        if ($pend && empty($state['pendingLogged'][$name])) {
+            $state['pendingLogged'][$name] = $now;
+            sv_log('warn', 'watchdog', sv_t('{0} cannot start', $name) . ' – ' . sv_t('Swarm finds no suitable node: {0}', implode('; ', array_unique(array_filter(array_column($pend, 'error')))) ?: sv_t('no suitable node')));
+        } elseif (!$pend && !empty($state['pendingLogged'][$name])) {
+            unset($state['pendingLogged'][$name]);
+            sv_log('info', 'watchdog', sv_t('{0} found a node again.', $name));
+        }
+    }
+    foreach (array_keys($state['pendingLogged']) as $n) if (!isset($services[$n])) unset($state['pendingLogged'][$n]);
 
     /* ---------- Nicht platzierbar ---------- */
     if ($notifyOn && $cfg['NOTIFY_PENDING'] === 'yes') {
@@ -179,6 +236,11 @@ function sv_monitor_run(array $cfg, bool $verbose = false): array {
         sort($where);
         $before = $state['placement'][$name] ?? null;
         if ($where) $state['placement'][$name] = $where;
+        if ($before !== null && $where && $before !== $where) {
+            $planned = $s['updated'] >= ($state['lastRun'] ?? 0) || isset($state['rebalance'][$name]);
+            sv_log($planned ? 'debug' : 'info', 'watchdog', sv_t('{0} now runs on {1}', $name, implode(', ', $where)) . ' (' . sv_t('Before: {0}', implode(', ', $before)) . ')'
+                . ($planned ? ' – ' . sv_t('after a change of the service') : ''));
+        }
         if ($notifyOn && $cfg['NOTIFY_MOVED'] === 'yes' && !$ignored($name) && $before !== null && $where && $before !== $where
             && $s['updated'] < ($state['lastRun'] ?? 0) && !isset($state['rebalance'][$name])) {
             $alerts->send(sv_t('{0} now runs on {1}', $name, implode(', ', $where)), sv_t('Before: {0}', implode(', ', $before)), $cfg['NOTIFY_MOVED_LEVEL']);
@@ -188,53 +250,101 @@ function sv_monitor_run(array $cfg, bool $verbose = false): array {
 
     /* ---------- Preferred node: return after an outage ---------- */
     $state['rebalance'] ??= [];
+    $state['rebalanceFail'] ??= [];
+    // services that no longer exist (only when the service list could be read)
+    if ($services) foreach (['rebalance', 'rebalanceFail'] as $k) foreach (array_keys($state[$k]) as $n) if (!isset($services[$n])) unset($state[$k][$n]);
     if ($cfg['REBALANCE'] === 'yes') {
-        $arch = sv_node_archs();
+        $arch = null;
         foreach ($services as $name => $s) {
             $P = $s['prefer'];
-            $ours = "node.hostname==$P";
             $phase = $state['rebalance'][$name] ?? null;
-            if ($P === '' || $s['global']) { unset($state['rebalance'][$name]); continue; }
+            if ($P === '' || $s['global']) {
+                if ($phase) $dbg(sv_t('{0}: no preferred node anymore – return forgotten.', $name));
+                unset($state['rebalance'][$name], $state['rebalanceFail'][$name]);
+                continue;
+            }
+            $running = array_filter($s['tasks'], fn($t) => $t['running']);
 
             if ($phase) {
-                // step 2: running on the preferred node? → remove the constraint again (no restart)
-                $onP = $s['tasks'] && !array_filter($s['tasks'], fn($t) => !($t['running'] && $t['node'] === $P));
-                $timeout = $now - $phase['since'] > 600;
-                // if the preferred node fails during the return: release the binding at once so Swarm can fail over
-                $pGone = !(($nodes[$P] ?? null) && $nodes[$P]['ready'] && $nodes[$P]['avail'] === 'active');
-                if ($onP || $timeout || $pGone || !in_array($ours, $s['cons'], true)) {
-                    if (in_array($ours, $s['cons'], true)) {
-                        sv_run([$DOCKER, 'service', 'update', '--detach', '--constraint-rm', $ours, $name]);
-                    }
-                    $log[] = $onP ? sv_t('{0} is back on {1}.', $name, $P) : ($pGone ? sv_t('{0}: return cancelled, {1} is not available.', $name, $P) : sv_t('{0}: return to {1} cancelled (timeout).', $name, $P));
-                    if ($notifyOn && $cfg['NOTIFY_MOVED'] === 'yes' && $onP) $alerts->send(sv_t('{0} is back on {1}', $name, $P), sv_t('Automatic return to the preferred node.'), $cfg['NOTIFY_MOVED_LEVEL']);
+                // step 2: arrived on the target node? → remove the temporary constraint again (no restart)
+                $T = (string)$phase['node'];
+                $tmp = array_values(array_filter($s['cons'], fn($c) => sv_constraint_node([$c]) === $T));
+                if (!$tmp) {
+                    // no temporary binding (removed by hand, Stack Up …) → nothing is returning
                     unset($state['rebalance'][$name]);
+                    $dbg(sv_t('{0}: return to {1} forgotten – the temporary node binding is gone.', $name, $T));
+                    continue;
+                }
+                $onT = $s['tasks'] && !array_filter($s['tasks'], fn($t) => !($t['running'] && $t['node'] === $T));
+                $age = $now - (int)$phase['since'];
+                // target node fails during the return: release the binding at once so Swarm can fail over
+                $tGone = !(($nodes[$T] ?? null) && $nodes[$T]['ready'] && $nodes[$T]['avail'] === 'active');
+                $down = !$running && $age > 300;          // the return took the service down and it does not start on the target
+                $timeout = $age > 600;
+                $changed = $T !== $P;                     // preferred node changed meanwhile
+                if (!$onT && !$tGone && !$down && !$timeout && !$changed) {
+                    $dbg(sv_t('{0}: return to {1} in progress ({2} s).', $name, $T, $age));
+                    continue;
+                }
+                foreach ($tmp as $c) {
+                    [$rc, $o] = sv_run([$DOCKER, 'service', 'update', '--detach', '--constraint-rm', $c, $name]);
+                    if ($rc !== 0) sv_log('error', 'watchdog', sv_t('{0}: the temporary node binding could not be removed.', $name), $o);
+                }
+                unset($state['rebalance'][$name]);
+                $errs = implode("\n", array_unique(array_filter(array_column($s['tasks'], 'error'))));
+                if ($onT) {
+                    unset($state['rebalanceFail'][$name]);
+                    $ev('info', sv_t('{0} is back on {1}.', $name, $T));
+                    if ($notifyOn && $cfg['NOTIFY_MOVED'] === 'yes') $alerts->send(sv_t('{0} is back on {1}', $name, $T), sv_t('Automatic return to the preferred node.'), $cfg['NOTIFY_MOVED_LEVEL']);
+                } elseif ($tGone) {
+                    $ev('warn', sv_t('{0}: return cancelled, {1} is not available.', $name, $T));
+                } elseif ($changed) {
+                    $ev('info', sv_t('{0}: return to {1} stopped – the placement was changed.', $name, $T));
+                } else {
+                    // failed: do not try again every few minutes (each attempt restarts the service)
+                    $f = $state['rebalanceFail'][$name] ?? [];
+                    $n = (($f['node'] ?? '') === $T ? (int)($f['n'] ?? 0) : 0) + 1;
+                    $wait = min(1440, 30 * 2 ** ($n - 1));
+                    $state['rebalanceFail'][$name] = ['node' => $T, 'n' => $n, 'until' => $now + $wait * 60];
+                    $ev('warn', ($down ? sv_t('{0} does not start on {1} – return cancelled, Swarm runs it elsewhere again.', $name, $T)
+                                       : sv_t('{0}: return to {1} cancelled (timeout).', $name, $T))
+                        . ' ' . sv_t('Next attempt in {0} minutes.', $wait), $errs);
                 }
                 continue;
             }
 
             // step 1: check the conditions and set the constraint
+            $fail = $state['rebalanceFail'][$name] ?? null;
+            if ($fail && ($fail['node'] ?? '') !== $P) { unset($state['rebalanceFail'][$name]); $fail = null; }
+            if (!$running) continue;                                                   // not running at all → nothing to move
+            if (!array_filter($running, fn($t) => $t['node'] !== $P)) {                 // already runs there
+                if ($fail) unset($state['rebalanceFail'][$name]);
+                continue;
+            }
             $node = $nodes[$P] ?? null;
-            if (!$node || !$node['ready'] || $node['avail'] !== 'active') continue;
-            if ($now - ($state['readySince'][$P] ?? $now) < (int)$cfg['REBALANCE_DELAY'] * 60) continue;
-            if (array_filter($s['cons'], 'sv_is_node_constraint')) continue;          // fixed placement (file or selection)
-            if ($s['archs'] && isset($arch[$P]) && !in_array($arch[$P], $s['archs'], true)) continue;
-            $running = array_filter($s['tasks'], fn($t) => $t['running']);
-            if (!$running || !array_filter($running, fn($t) => $t['node'] !== $P)) continue;   // already runs there
-            [$rc, $o] = sv_run([$DOCKER, 'service', 'update', '--detach', '--constraint-add', $ours, $name]);
+            if (!$node || !$node['ready'] || $node['avail'] !== 'active') { $dbg(sv_t('{0} waits for {1}: node not available.', $name, $P)); continue; }
+            $stable = $now - ($state['readySince'][$P] ?? $now);
+            if ($stable < (int)$cfg['REBALANCE_DELAY'] * 60) { $dbg(sv_t('{0} waits for {1}: node stable for {2} of {3} minutes.', $name, $P, intdiv($stable, 60), $cfg['REBALANCE_DELAY'])); continue; }
+            if (array_filter($s['cons'], 'sv_is_node_constraint')) { $dbg(sv_t('{0}: fixed node in the constraints – no return.', $name)); continue; }
+            $arch ??= sv_node_archs();
+            if ($s['archs'] && isset($arch[$P]) && !in_array($arch[$P], $s['archs'], true)) { $dbg(sv_t('{0}: the image is not available for {1} ({2}).', $name, $P, $arch[$P])); continue; }
+            if ($fail && $fail['until'] > $now) { $dbg(sv_t('{0}: last return to {1} failed – next attempt at {2}.', $name, $P, date('H:i', (int)$fail['until']))); continue; }
+            [$rc, $o] = sv_run([$DOCKER, 'service', 'update', '--detach', '--constraint-add', "node.hostname==$P", $name]);
             if ($rc === 0) {
                 $state['rebalance'][$name] = ['since' => $now, 'node' => $P];
-                $log[] = sv_t('{0} is moved back to the preferred node {1}.', $name, $P);
+                $ev('info', sv_t('{0} is moved back to the preferred node {1}.', $name, $P));
             } else {
-                $log[] = sv_t('{0}: moving back failed: {1}', $name, $o);
+                $ev('error', sv_t('{0}: moving back failed: {1}', $name, mb_substr($o, 0, 200)), $o);
             }
         }
-    } else {
+    } elseif ($state['rebalance']) {
         // feature switched off: finish pending returns cleanly
         foreach ($state['rebalance'] as $name => $ph) {
             sv_run([$DOCKER, 'service', 'update', '--detach', '--constraint-rm', "node.hostname=={$ph['node']}", $name]);
-            unset($state['rebalance'][$name]);
+            $ev('info', sv_t('{0}: return to {1} stopped – automatic return is switched off.', $name, $ph['node']));
         }
+        $state['rebalance'] = [];
+        $state['rebalanceFail'] = [];
     }
 
     /* ---------- Update check at the interval ---------- */
@@ -243,7 +353,7 @@ function sv_monitor_run(array $cfg, bool $verbose = false): array {
         if ($now - (int)($upd['checked'] ?? 0) >= max(1, (int)$cfg['UPDATE_INTERVAL']) * 3600) {
             $upd = sv_check_updates();
             $avail = array_keys(array_filter($upd['services'], fn($u) => $u['update']));
-            $log[] = sv_t('Update check: {0}', $avail ? implode(', ', $avail) : sv_t('everything up to date'));
+            $ev('info', sv_t('Update check: {0}', $avail ? implode(', ', $avail) : sv_t('everything up to date')), $upd['errors'] ? implode("\n", array_unique($upd['errors'])) : null);
             // notify only newly found versions
             $new = array_values(array_filter($avail, fn($n) => ($upd['notified'][$n] ?? '') !== $upd['services'][$n]['remote']));
             if ($new && $notifyOn && $cfg['NOTIFY_UPDATES'] === 'yes') {
@@ -265,6 +375,7 @@ function sv_monitor_run(array $cfg, bool $verbose = false): array {
     if (!$notifyOn) $state['alerts'] = [];
 
     $state['lastRun'] = $now;
+    $dbg(sv_t('Watchdog run: {0} nodes, {1} services, {2} s.', count($nodes), count($services), round(microtime(true) - $t0, 1)));
     // events (return, update check …) for the status display
     $state['events'] ??= [];
     foreach ($log as $l) $state['events'][] = ['t' => $now, 'text' => $l];

@@ -95,7 +95,7 @@ $sv_nw = array_sum(array_map(fn($n) => count($sv_warn($n)), $sv_nodes));
 <?=sv_lang_script()?>
 
 <div id="sv-settings">
-<div class="sv-tabbar"><a href="#" class="sv-tabbtn" data-tab="general"><i class="fa fa-sliders"></i> <?=sv_e('General')?></a><a href="#" class="sv-tabbtn" data-tab="nodes"><i class="fa fa-server"></i> Nodes<?if ($sv_nw):?> <span class="sv-tabbadge"><?=$sv_nw?></span><?endif;?></a><a href="#" class="sv-tabbtn" data-tab="watch"><i class="fa fa-bell"></i> <?=sv_e('Watchdog')?></a><a href="#" class="sv-tabbtn" data-tab="maint"><i class="fa fa-wrench"></i> <?=sv_e('Maintenance')?></a><a href="#" class="sv-tabbtn" data-tab="status"><i class="fa fa-heartbeat"></i> Status</a></div>
+<div class="sv-tabbar"><a href="#" class="sv-tabbtn" data-tab="general"><i class="fa fa-sliders"></i> <?=sv_e('General')?></a><a href="#" class="sv-tabbtn" data-tab="nodes"><i class="fa fa-server"></i> Nodes<?if ($sv_nw):?> <span class="sv-tabbadge"><?=$sv_nw?></span><?endif;?></a><a href="#" class="sv-tabbtn" data-tab="watch"><i class="fa fa-bell"></i> <?=sv_e('Watchdog')?></a><a href="#" class="sv-tabbtn" data-tab="maint"><i class="fa fa-wrench"></i> <?=sv_e('Maintenance')?></a><a href="#" class="sv-tabbtn" data-tab="status"><i class="fa fa-heartbeat"></i> Status</a><a href="#" class="sv-tabbtn" data-tab="log"><i class="fa fa-file-text-o"></i> Log</a></div>
 
 <div class="sv-tab" data-tab="general">
 <div class="sv-set-title"><i class="fa fa-sitemap"></i> <?=sv_e('Swarm cluster')?></div>
@@ -427,6 +427,37 @@ $sv_nw = array_sum(array_map(fn($n) => count($sv_warn($n)), $sv_nodes));
 </blockquote>
 </div>
 
+<div class="sv-tab" data-tab="log">
+<div class="sv-set-title"><i class="fa fa-file-text-o"></i> Log</div>
+<dl><dt><?=sv_e('Record:')?></dt><dd><select id="LOG_LEVEL">
+  <?=$sv_opt($sv_cfg['LOG_LEVEL'], 'error', sv_t('Errors only'))?>
+  <?=$sv_opt($sv_cfg['LOG_LEVEL'], 'warn', sv_t('Warnings and errors'))?>
+  <?=$sv_opt($sv_cfg['LOG_LEVEL'], 'info', sv_t('Info, warnings and errors (recommended)'))?>
+  <?=$sv_opt($sv_cfg['LOG_LEVEL'], 'debug', sv_t('Everything including debug'))?>
+</select></dd></dl>
+<div class="sv-log-tools">
+  <select class="sv-log-min" title="<?=sv_e('Show')?>">
+    <option value="debug"><?=sv_e('All levels')?></option><option value="info"><?=sv_e('Info and above')?></option>
+    <option value="warn"><?=sv_e('Warnings and errors')?></option><option value="error"><?=sv_e('Errors only')?></option>
+  </select>
+  <select class="sv-log-src">
+    <option value=""><?=sv_e('All sources')?></option><option value="watchdog"><?=sv_e('Watchdog')?></option><option value="action"><?=sv_e('Actions')?></option>
+    <option value="settings"><?=sv_e('Settings')?></option><option value="agent"><?=sv_e('CPU/RAM agent')?></option>
+  </select>
+  <input type="text" class="sv-log-q" placeholder="<?=sv_e('Search …')?>">
+  <label class="sv-log-autolabel"><input type="checkbox" class="sv-log-auto" checked> <?=sv_e('live')?></label>
+  <input type="button" class="sv-log-refresh" value="<?=sv_e('Refresh')?>">
+  <input type="button" class="sv-log-download" value="<?=sv_e('Download')?>">
+  <input type="button" class="sv-log-clear" value="<?=sv_e('Clear')?>">
+  <span class="sv-log-count sv-dim"></span>
+</div>
+<div class="sv-log-wrap"><table class="sv-logtable"><tbody></tbody></table><p class="sv-log-empty sv-dim"><?=sv_e('loading …')?></p></div>
+<blockquote class="inline_help">
+  <?=sv_e('What Swarm View does in the background: watchdog decisions (failover, return to the preferred node, crash loops, nodes going offline), your actions on the Docker page with their output, changed settings and errors. Click an entry with an arrow for details. "Everything including debug" also records every watchdog run and why a service does or does not return – helpful to find problems, but verbose.')?>
+  <?=sv_e('The log is kept in RAM (at most about 1 MB, older entries are dropped) and is empty after a reboot of Unraid. Unraid\'s system log additionally receives the watchdog events (tag swarm-view).')?>
+</blockquote>
+</div>
+
 <div class="sv-set-buttons">
   <input type="button" id="sv-set-apply" value="<?=sv_e('Apply')?>" disabled>
   <input type="button" id="sv-set-done" value="<?=sv_e('Done')?>">
@@ -530,6 +561,74 @@ $sv_nw = array_sum(array_map(fn($n) => count($sv_warn($n)), $sv_nodes));
   $('#sv-notify-test').on('click', function () {
     post({ action: 'notify-test', level: 'normal' }).done((r) => show(t('Notification'), r)).fail((x) => show(t('Notification'), fail(x)));
   });
+
+  // ---------- log ----------
+  const LOGURL = '/plugins/swarm-view/include/log.php';
+  const LVL = { debug: 0, info: 1, warn: 2, error: 3 };
+  const LVL_TXT = { debug: 'Debug', info: 'Info', warn: t('Warning'), error: t('Error') };
+  const SRC_TXT = { watchdog: t('Watchdog'), action: t('Action'), settings: t('Settings'), agent: t('CPU/RAM agent') };
+  const $log = $('.sv-tab[data-tab="log"]');
+  const logOpen = new Set();          // expanded entries stay open across refreshes
+  let logData = [];
+  let logBusy = false;
+  const logKey = (e) => `${e.t}|${e.s}|${e.m}`;
+  const two = (n) => String(n).padStart(2, '0');
+  const logTime = (ts, full) => {
+    const d = new Date(ts * 1000);
+    const date = full ? `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}` : (window.SwarmViewLangCode === 'de' ? `${two(d.getDate())}.${two(d.getMonth() + 1)}.` : `${two(d.getMonth() + 1)}-${two(d.getDate())}`);
+    return `${date} ${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+  };
+  const logFiltered = () => {
+    const min = LVL[$log.find('.sv-log-min').val()] ?? 0;
+    const src = $log.find('.sv-log-src').val();
+    const q = String($log.find('.sv-log-q').val() || '').toLowerCase();
+    return logData.filter((e) => (LVL[e.l] ?? 1) >= min && (!src || e.s === src) && (!q || `${e.m}\n${e.d || ''}`.toLowerCase().includes(q)));
+  };
+  const renderLog = () => {
+    const rows = logFiltered();
+    const html = rows.slice(-1000).reverse().map((e) => {
+      const k = logKey(e);
+      return `<tr class="sv-log-${esc(e.l)}${e.d ? ' sv-log-has' : ''}${logOpen.has(k) ? ' open' : ''}" data-key="${esc(k)}">`
+        + `<td class="sv-log-t">${esc(logTime(e.t))}</td><td><span class="sv-log-lvl">${esc(LVL_TXT[e.l] || e.l)}</span></td>`
+        + `<td class="sv-log-s">${esc(SRC_TXT[e.s] || e.s)}</td>`
+        + `<td class="sv-log-m">${e.d ? '<i class="fa fa-caret-right"></i> ' : ''}${esc(e.m)}${e.d ? `<pre class="sv-log-d">${esc(e.d)}</pre>` : ''}</td></tr>`;
+    }).join('');
+    $log.find('.sv-logtable tbody').html(html);
+    $log.find('.sv-log-empty').toggle(!rows.length).text(logData.length ? t('No entries match the filter.') : t('The log is empty.'));
+    $log.find('.sv-log-count').text(rows.length === logData.length ? t('{0} entries', logData.length) : t('{0} of {1} entries', rows.length, logData.length));
+  };
+  const loadLog = () => {
+    if (logBusy) return;
+    logBusy = true;
+    $.ajax({ url: LOGURL, data: { limit: 3000 }, dataType: 'json', cache: false, timeout: 15000 })
+      .done((r) => { logData = Array.isArray(r.entries) ? r.entries : []; renderLog(); })
+      .fail((x) => { $log.find('.sv-log-empty').show().text(t('The log could not be loaded ({0}).', x.status || t('timeout'))); })
+      .always(() => { logBusy = false; });
+  };
+  $log.on('change input', '.sv-log-min, .sv-log-src, .sv-log-q', renderLog);
+  $log.on('click', 'tr.sv-log-has td.sv-log-m', function (e) {
+    if ($(e.target).closest('pre').length) return;      // allow selecting text in the details
+    const $tr = $(this).closest('tr').toggleClass('open');
+    const k = String($tr.data('key'));
+    if ($tr.hasClass('open')) logOpen.add(k); else logOpen.delete(k);
+  });
+  $log.find('.sv-log-refresh').on('click', loadLog);
+  $log.find('.sv-log-download').on('click', () => {
+    const txt = logData.map((e) => `${logTime(e.t, true)} [${e.l.toUpperCase()}] ${e.s}: ${e.m}${e.d ? `\n    ${String(e.d).split('\n').join('\n    ')}` : ''}`).join('\n') + '\n';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain' }));
+    a.download = `swarm-view-log-${logTime(Date.now() / 1000, true).replace(/[^0-9]/g, '').slice(0, 12)}.txt`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  });
+  $log.find('.sv-log-clear').on('click', () => {
+    confirmBox(t('Clear the log?'), t('All entries are deleted.'), () => {
+      post({ action: 'log-clear' }).done((r) => { if (!r.ok) show('Log', r); logOpen.clear(); loadLog(); }).fail((x) => show('Log', fail(x)));
+    });
+  });
+  $('.sv-tabbtn[data-tab="log"]').on('click', loadLog);
+  if ($log.is(':visible')) loadLog();
+  setInterval(() => { if ($log.is(':visible') && $log.find('.sv-log-auto').is(':checked') && !document.hidden) loadLog(); }, 5000);
 
   $('.sv-avail').on('change', function () {
     const $s = $(this);

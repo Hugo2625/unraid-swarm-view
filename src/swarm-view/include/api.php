@@ -207,8 +207,14 @@ if ($swarm['active'] && $swarm['manager']) {
         $updates = sv_state_read('updates');
         $rebal = sv_state_read('monitor')['rebalance'] ?? [];
         foreach ($services as &$svc) {
-            $svc['placeNode'] = isset($rebal[$svc['name']]) ? '' : sv_constraint_node($svc['constraints']);
-            $svc['rebalancing'] = isset($rebal[$svc['name']]);
+            // a return to the preferred node is only shown while it really runs: the watchdog's temporary
+            // node.hostname constraint is set, the tasks have not arrived yet and it is not overdue (watchdog: 10 min)
+            $ph = $rebal[$svc['name']] ?? null;
+            $cn = sv_constraint_node($svc['constraints']);
+            $tmp = $ph && $cn !== '' && $cn === ($ph['node'] ?? '') && sv_now() - (int)($ph['since'] ?? 0) <= 660;
+            $arrived = $tmp && $svc['tasks'] && !array_filter($svc['tasks'], fn($t) => !(stripos($t['current'], 'Running') === 0 && $t['node'] === $cn));
+            $svc['placeNode'] = $tmp ? '' : $cn;      // the temporary binding is not a fixed node
+            $svc['rebalancing'] = $tmp && !$arrived;
             $u = $updates['services'][$svc['name']] ?? null;
             $svc['update'] = $u ? (bool)$u['update'] : null;
             // replicas: from `service ls`; if missing, compute from the tasks

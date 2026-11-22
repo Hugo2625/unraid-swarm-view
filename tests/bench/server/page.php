@@ -3,7 +3,8 @@
  * sorts them by rank and renders them stacked (MainContentTabless). Layout = Unraid's CSS + dynamix.js
  * + the minimal globals the pages expect. */
 $docroot = '/usr/local/emhttp';
-putenv('SV_DOCKER=/bin/false');
+// $SVTB_PAGE (router): render this single page instead of the Docker tab (e.g. SwarmViewSettings)
+if (empty($SVTB_PAGE)) putenv('SV_DOCKER=/bin/false');
 // no shared files: the section rank comes from the scenario (see below), the language via SV_DYNAMIX_CFG (scenario.php)
 
 // --- Unraid globals/helpers the pages use ---
@@ -44,7 +45,8 @@ if (isset($site['SwarmView'])) {
     $site['SwarmView']['Menu'] = $mc['MENU'] ?? 'Docker:3';
 }   // the scenario decides which plugins are installed
 $pages = [];
-foreach (find_pages('Docker') as $k => $p) $pages[$k] = $p;   // no Cond evaluation – the scenario decides
+if (!empty($SVTB_PAGE)) $pages[$SVTB_PAGE] = $site[$SVTB_PAGE];
+else foreach (find_pages('Docker') as $k => $p) $pages[$k] = $p;   // no Cond evaluation – the scenario decides
 $order = array_map(fn($p) => $p['name'], $pages);
 
 function svtb_content(array $page): string {

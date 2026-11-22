@@ -180,3 +180,28 @@ body:not(.sv-advanced) .sv-adv { display: none !important; }
 #docker_list tr.sv-orphan-sum td { padding: 6px 10px; }
 #docker_list tr.sv-orphan-sum a { color: inherit; text-decoration: none; }
 #docker_list tr.sv-orphan-sum a:hover { text-decoration: underline; }
+
+/* settings → Log */
+#sv-settings .sv-log-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 10px; }
+#sv-settings .sv-log-tools select, #sv-settings .sv-log-tools input { margin: 0; }
+#sv-settings .sv-log-tools select { width: auto; min-width: 150px; padding-right: 24px; }
+#sv-settings .sv-log-tools input.sv-log-q { width: 220px; }
+#sv-settings .sv-log-autolabel { white-space: nowrap; cursor: pointer; }
+#sv-settings .sv-log-wrap { max-height: 62vh; overflow: auto; border: 1px solid rgba(128,128,128,.3); border-radius: 4px; }
+#sv-settings table.sv-logtable { width: 100%; margin: 0; border-collapse: collapse; font-size: .92em; }
+#sv-settings table.sv-logtable td { height: auto; padding: 5px 8px; line-height: 1.45; white-space: normal; border-bottom: 1px solid rgba(128,128,128,.14); vertical-align: top; text-align: left; }
+#sv-settings table.sv-logtable td.sv-log-t, #sv-settings table.sv-logtable td.sv-log-s { white-space: nowrap; opacity: .7; font-variant-numeric: tabular-nums; }
+#sv-settings .sv-log-lvl { display: inline-block; min-width: 58px; padding: 0 6px; border: 1px solid currentColor; border-radius: 3px; font-size: .8em; line-height: 1.55; text-align: center; }
+#sv-settings .sv-log-debug .sv-log-lvl { color: #9e9e9e; }
+#sv-settings .sv-log-info .sv-log-lvl { color: #42a5f5; }
+#sv-settings .sv-log-warn .sv-log-lvl { color: #ff9800; }
+#sv-settings .sv-log-error .sv-log-lvl { color: #f44336; }
+#sv-settings tr.sv-log-warn td { background: rgba(255,152,0,.06); }
+#sv-settings tr.sv-log-error td { background: rgba(244,67,54,.08); }
+#sv-settings tr.sv-log-debug td.sv-log-m { opacity: .75; }
+#sv-settings tr.sv-log-has td.sv-log-m { cursor: pointer; }
+#sv-settings tr.sv-log-has .fa-caret-right { width: 8px; opacity: .7; transition: transform .15s; }
+#sv-settings tr.sv-log-has.open .fa-caret-right { transform: rotate(90deg); }
+#sv-settings .sv-log-d { display: none; margin: 4px 0 2px; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: .9em; opacity: .85; cursor: text; }
+#sv-settings tr.open .sv-log-d { display: block; }
+#sv-settings .sv-log-empty { margin: 0; padding: 12px; }

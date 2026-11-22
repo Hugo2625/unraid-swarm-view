@@ -9,6 +9,7 @@ $GLOBALS['CFG_FILE']   = getenv('SV_CFG') ?: '/boot/config/plugins/swarm-view/sw
 $GLOBALS['CRON_FILE']  = dirname($GLOBALS['CFG_FILE']) . '/cleanup.cron';
 $GLOBALS['STATE_DIR']  = getenv('SV_STATE') ?: '/tmp/swarm-view';
 $GLOBALS['NOTIFY']     = getenv('SV_NOTIFY') ?: '/usr/local/emhttp/plugins/dynamix/scripts/notify';
+$GLOBALS['LOG_FILE']   = getenv('SV_LOG') ?: $GLOBALS['STATE_DIR'] . '/swarm-view.log';
 const SV_AGENT = 'swarm-view-agent';
 require_once __DIR__ . '/i18n.php';
 
@@ -61,6 +62,9 @@ const SV_DEFAULTS = [
     // CPU/RAM agent
     'STATS'            => 'no',
     'STATS_INTERVAL'   => '10',      // seconds
+
+    // log (settings → Log): debug | info | warn | error – what is recorded
+    'LOG_LEVEL'        => 'info',
 ];
 
 function sv_cfg(): array {
@@ -246,6 +250,94 @@ function sv_state_write(string $name, array $data): void {
     $tmp = "$STATE_DIR/.$name.json." . getmypid();
     file_put_contents($tmp, json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
     rename($tmp, "$STATE_DIR/$name.json");
+}
+
+/* ---------- Log (RAM, settings → Log) ---------- */
+
+const SV_LOG_LEVELS = ['debug' => 0, 'info' => 1, 'warn' => 2, 'error' => 3];
+const SV_LOG_MAX = 1048576;      // bytes; above that the oldest half is dropped
+
+/**
+ * One log entry: sv_log(level, source, translated message, optional details).
+ * $src: watchdog | action | settings | agent. Entries below LOG_LEVEL are not written.
+ */
+function sv_log(string $level, string $src, string $msg, ?string $detail = null): void {
+    global $LOG_FILE;
+    if (!isset(SV_LOG_LEVELS[$level])) $level = 'info';
+    $min = SV_LOG_LEVELS[sv_cfg()['LOG_LEVEL']] ?? 1;
+    if (SV_LOG_LEVELS[$level] < $min) return;
+    $e = ['t' => sv_now(), 'l' => $level, 's' => $src, 'm' => $msg];
+    $detail = trim((string)$detail);
+    if ($detail !== '' && $detail !== $msg) $e['d'] = mb_substr($detail, 0, 4000);
+    @mkdir(dirname($LOG_FILE), 0755, true);
+    $fh = @fopen($LOG_FILE, 'a+');
+    if (!$fh) return;
+    flock($fh, LOCK_EX);
+    fwrite($fh, json_encode($e, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) . "\n");
+    fflush($fh);
+    $size = fstat($fh)['size'] ?? 0;
+    if ($size > SV_LOG_MAX) {
+        // keep the newer half, starting at a line boundary
+        fseek($fh, $size - intdiv(SV_LOG_MAX, 2));
+        fgets($fh);
+        $rest = stream_get_contents($fh);
+        ftruncate($fh, 0);
+        rewind($fh);
+        fwrite($fh, $rest);
+    }
+    flock($fh, LOCK_UN);
+    fclose($fh);
+}
+
+/** Last $limit entries (newest last), at least level $min */
+function sv_log_read(int $limit = 500, string $min = 'debug'): array {
+    global $LOG_FILE;
+    $minN = SV_LOG_LEVELS[$min] ?? 0;
+    $lines = is_file($LOG_FILE) ? (@file($LOG_FILE, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: []) : [];
+    $res = [];
+    for ($i = count($lines) - 1; $i >= 0 && count($res) < $limit; $i--) {
+        $e = json_decode($lines[$i], true);
+        if (!is_array($e) || (SV_LOG_LEVELS[$e['l'] ?? ''] ?? 1) < $minN) continue;
+        $res[] = $e;
+    }
+    return array_reverse($res);
+}
+
+function sv_log_clear(): bool {
+    global $LOG_FILE;
+    return !is_file($LOG_FILE) || @file_put_contents($LOG_FILE, '') !== false;
+}
+
+/* ---------- Return to the preferred node: bookkeeping ---------- */
+
+/**
+ * Forget returns in progress (watchdog state), holding the watchdog lock.
+ * $filter(name) selects the services (null = all). With $release the temporary
+ * node.hostname constraint of the return is removed again (otherwise the caller resets the spec itself).
+ * @return string[] names of the services
+ */
+function sv_rebalance_forget(?callable $filter, bool $release): array {
+    global $DOCKER, $STATE_DIR;
+    @mkdir($STATE_DIR, 0755, true);
+    $lock = @fopen("$STATE_DIR/monitor.lock", 'c');
+    if ($lock) flock($lock, LOCK_EX);
+    $state = sv_state_read('monitor');
+    $done = [];
+    foreach ($state['rebalance'] ?? [] as $name => $ph) {
+        if ($filter && !$filter($name)) continue;
+        if ($release) {
+            [$rc, $out] = sv_run([$DOCKER, 'service', 'inspect', $name, '--format', '{{json .Spec.TaskTemplate.Placement.Constraints}}']);
+            $cons = $rc === 0 ? (json_decode($out, true) ?: []) : [];
+            foreach ($cons as $c) {
+                if (sv_constraint_node([$c]) === ($ph['node'] ?? '')) sv_run([$DOCKER, 'service', 'update', '--detach', '--constraint-rm', $c, $name]);
+            }
+        }
+        unset($state['rebalance'][$name], $state['rebalanceFail'][$name]);
+        $done[] = $name;
+    }
+    if ($done) sv_state_write('monitor', $state);
+    if ($lock) { flock($lock, LOCK_UN); fclose($lock); }
+    return $done;
 }
 
 /* ---------- Unraid-Benachrichtigung ---------- */

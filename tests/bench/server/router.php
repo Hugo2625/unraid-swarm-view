@@ -21,6 +21,50 @@ if ($uri === '/' || $uri === '/Docker') {
     return true;
 }
 
+/* ---------- Swarm View settings page (real page; docker = backend mock with 4 nodes) ---------- */
+if ($uri === '/Settings/SwarmView') {
+    if (isset($_GET['s'])) { setcookie('svtb', $_GET['s'], 0, '/'); $_COOKIE['svtb'] = $_GET['s']; $S = svtb_scenario(); }
+    putenv('SV_DOCKER=' . BENCH . '/backend/docker-mock.py');
+    putenv('MOCK_MODE=multi');
+    svtb_log_fixture();
+    $SVTB_PAGE = 'SwarmViewSettings';
+    require __DIR__ . '/page.php';
+    return true;
+}
+if ($uri === '/plugins/swarm-view/include/log.php') {
+    require '/usr/local/emhttp/plugins/swarm-view/include/log.php';
+    return true;
+}
+
+/** Example log for the settings page (written once per scenario) */
+function svtb_log_fixture(): void {
+    $f = getenv('SV_STATE') . '/swarm-view.log';
+    if (is_file($f) && filesize($f) > 0 && empty($_GET['newlog'])) return;
+    $now = time();
+    $E = [
+        [-3500, 'info', 'settings', 'Settings saved.', "REBALANCE: no → yes\nLOG_LEVEL: info → debug"],
+        [-3400, 'info', 'action', 'Stack Up media', "Updating service media_lidarr (id: x1)\nUpdating service media_navidrome (id: x2)"],
+        [-3000, 'warn', 'watchdog', 'Node raspberrypi is offline (before: online).'],
+        [-2990, 'info', 'watchdog', 'media_navidrome now runs on Unraid (Before: raspberrypi)'],
+        [-2980, 'warn', 'watchdog', 'Notification: Node raspberrypi is offline', 'Swarm cannot reach raspberrypi anymore. Services without a fixed node are moved to other nodes.'],
+        [-2400, 'info', 'watchdog', 'Node raspberrypi is online (before: offline).'],
+        [-2100, 'debug', 'watchdog', 'media_navidrome waits for raspberrypi: node stable for 5 of 5 minutes.'],
+        [-2040, 'info', 'watchdog', 'media_navidrome is moved back to the preferred node raspberrypi.'],
+        [-1980, 'info', 'watchdog', 'media_navidrome is back on raspberrypi.'],
+        [-1500, 'info', 'watchdog', 'media_audnexus_api is moved back to the preferred node Unraid.'],
+        [-1140, 'warn', 'watchdog', 'media_audnexus_api does not start on Unraid – return cancelled, Swarm runs it elsewhere again. Next attempt in 30 minutes.', 'starting container failed: Bind for 0.0.0.0:3100 failed: port is already allocated'],
+        [-900, 'error', 'action', 'Update media_metube – failed', "Update failed\nError response from daemon: manifest unknown"],
+        [-600, 'info', 'action', 'Placement of smarthome_esphome: prefer Unraid'],
+        [-300, 'info', 'watchdog', 'Update check: media_metube, smarthome_mosquitto'],
+        [-120, 'debug', 'watchdog', 'Watchdog run: 4 nodes, 21 services, 0.8 s.'],
+        [-60, 'debug', 'watchdog', 'Watchdog run: 4 nodes, 21 services, 0.7 s.'],
+    ];
+    $out = '';
+    foreach ($E as $e) $out .= json_encode(['t' => $now + $e[0], 'l' => $e[1], 's' => $e[2], 'm' => $e[3]] + (isset($e[4]) ? ['d' => $e[4]] : []), JSON_UNESCAPED_UNICODE) . "\n";
+    @mkdir(dirname($f), 0777, true);
+    file_put_contents($f, $out);
+}
+
 /* ---------- Unraid ---------- */
 if ($uri === '/plugins/dynamix.docker.manager/include/DockerContainers.php') {
     if (($S['unraidList'] ?? '') === 'error') { http_response_code(500); return true; }

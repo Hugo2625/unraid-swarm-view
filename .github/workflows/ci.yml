@@ -35,4 +35,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Backend tests
-        run: python3 tests/bench/backend/test_backend.py
+        run: |
+          python3 tests/bench/backend/test_backend.py
+          python3 tests/bench/backend/test_monitor.py
